@@ -4,13 +4,14 @@
   "width_mult": 1.0,
   "dropout3d": 0.3,
   "seed_offset": 0,
-  "fold": "all",
+  "fold": "4",
   "epochs": 40,
   "batch_size": 64,
   "lr": 0.001,
   "weight_decay": 0.0001,
   "ema_decay": 0.999,
   "chimera_frac": 0.0,
+  "chimera_pos_frac": 0.0,
   "label_smoothing": 0.0,
   "pool": null,
   "head": "linear",
@@ -25,5 +26,5 @@
   "run_name": "cnn3d_frame3d",
   "folds_csv": null,
   "crops_dir": "prepared/frames",
-  "overwrite": false
+  "overwrite": true
 }

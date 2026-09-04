@@ -1,36 +1,44 @@
 {
   "members": [
     "cnn3d_seedavg",
+    "cnn3d_m4avg",
     "cnn3d_focal2",
-    "fusion3d_crop_frame",
     "r3d18_crop",
-    "slicevoter_crop_stta",
+    "cnn3d_frame3d",
     "effb0_mip_ref40_stta",
     "effb0_mip_catavgmax_mlp_stta",
     "effb0_mipasym_stta",
-    "effb0_frame_mip_stta"
+    "effb0_frame_mip_stta",
+    "fusion3d_m4",
+    "fusion3d_crop_frame",
+    "slicevoter_m4",
+    "slicevoter_crop_stta"
   ],
   "weights": [
-    0.1111111111111111,
-    0.1111111111111111,
-    0.1111111111111111,
-    0.1111111111111111,
-    0.1111111111111111,
-    0.1111111111111111,
-    0.1111111111111111,
-    0.1111111111111111,
-    0.1111111111111111
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693,
+    0.07692307692307693
   ],
   "weighted_beats_mean_nested": false,
-  "temperature": 0.6761981068826596,
+  "temperature": 0.6833337446672093,
   "clip": [
     0.02,
     0.98
   ],
-  "oof_auroc": 0.9688483752920947,
-  "oof_log_loss_calibrated_clipped": 0.22888005214196747,
+  "oof_auroc": 0.9697456020457652,
+  "oof_log_loss_calibrated_clipped": 0.22623621185846113,
   "nested_log_loss": {
-    "mean": 0.22951922366258362,
-    "weighted": 0.23504352719250918
+    "mean": 0.22674412778476796,
+    "weighted": 0.23275554533142281
   }
 }
