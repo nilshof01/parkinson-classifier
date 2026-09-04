@@ -1,0 +1,267 @@
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+from scipy.optimize import minimize_scalar
+from scipy.special import expit, logit
+from sklearn.metrics import log_loss, roc_auc_score
+from torch.utils.data import DataLoader
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from training.augment3d import Augment3D
+from training.chimera import ChimeraMixer
+from training.config import TrainConfig
+from training.dataset import DatScanDataset
+from training.models.registry import ModelRegistry
+from training.trainer import Trainer
+from training.view_mip import TriaxialMip
+from training.view_mip_asym import MipWithAsymmetry
+from training.view_volume import VolumeView
+from training.view_volume_asym import VolumeWithAsymmetry
+from training.view_slices import AdjacentSlices
+
+CFG = TrainConfig()
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Train a model on prepared DaT crops")
+    p.add_argument("--model", default="efficientnet_b0", choices=ModelRegistry.names())
+    p.add_argument("--view", default="mip",
+                   choices=["mip", "slices25d", "mipasym", "volume3d", "volume3dasym",
+                            "fusion3d"])
+    p.add_argument("--width-mult", type=float, default=1.0, help="cnn3d width multiplier")
+    p.add_argument("--dropout3d", type=float, default=0.3, help="cnn3d head dropout")
+    p.add_argument("--seed-offset", type=int, default=0,
+                   help="offsets the training seed (for seed-ensembling); folds unchanged")
+    p.add_argument("--fold", default="all", help="fold index 0..4 or 'all'")
+    p.add_argument("--epochs", type=int, default=40)
+    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--weight-decay", type=float, default=1e-4)
+    p.add_argument("--ema-decay", type=float, default=0.999)
+    p.add_argument("--chimera-frac", type=float, default=0.0,
+                   help="fraction of normal samples replaced by normal+normal chimeras")
+    p.add_argument("--chimera-pos-frac", type=float, default=0.0,
+                   help="fraction of abnormal samples replaced by worst-side "
+                        "abnormal+abnormal chimeras")
+    p.add_argument("--label-smoothing", type=float, default=0.0,
+                   help="BCE target smoothing, e.g. 0.05 -> targets 0.05/0.95")
+    p.add_argument("--pool", default=None, choices=["avg", "max", "catavgmax"],
+                   help="global pooling of CNN backbones (default: model's own, avg); "
+                        "catavgmax = concatenated avg+max")
+    p.add_argument("--head", default="linear", choices=["linear", "mlp"],
+                   help="classifier head: single linear (default) or pooled->256->1 MLP")
+    p.add_argument("--loss", default="bce", choices=["bce", "focal"])
+    p.add_argument("--focal-gamma", type=float, default=2.0)
+    p.add_argument("--aug", default="all",
+                   help="which augmentations to enable: 'all', 'none', or a comma-"
+                        "separated subset of flip,geom,res,field,scale,noise")
+    p.add_argument("--slice-k", type=int, default=2, help="slice offset for slices25d view")
+    p.add_argument("--no-pretrained", action="store_true")
+    p.add_argument("--no-tta", action="store_true", help="disable flip TTA on val predictions")
+    p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--device", default="cuda:0")
+    p.add_argument("--run-name", default=None)
+    p.add_argument("--folds-csv", default=None,
+                   help="alternative fold assignment (e.g. prepared/folds_group.csv "
+                        "for leave-one-spacing-group-out CV)")
+    p.add_argument("--crops-dir", default=None,
+                   help="alternative crop directory (e.g. prepared/crops_h3.9 "
+                        "for harmonized crops)")
+    p.add_argument("--overwrite", action="store_true",
+                   help="allow reusing a run directory that already contains results")
+    return p.parse_args()
+
+
+def build_view(args):
+    if args.view == "mip":
+        return TriaxialMip(CFG.input_size)
+    if args.view == "mipasym":
+        return MipWithAsymmetry(CFG.input_size)
+    if args.view in ("volume3d", "fusion3d"):
+        return VolumeView()
+    if args.view == "volume3dasym":
+        return VolumeWithAsymmetry()
+    return AdjacentSlices(CFG.input_size, k=args.slice_k)
+
+
+AUG_NAMES = ("flip", "geom", "zoom", "res", "field", "scale", "noise", "gamma")
+
+
+AUG_DEFAULT_OFF = {"gamma": 0.4}  # p when explicitly enabled; 0 in Augment3D default
+
+
+def build_augment(spec):
+    if spec == "none":
+        return None
+    chosen = set(AUG_NAMES) if spec == "all" else set(spec.split(","))
+    unknown = chosen - set(AUG_NAMES)
+    if unknown:
+        raise SystemExit(f"unknown augmentations {sorted(unknown)}, valid: {AUG_NAMES}")
+    kw = {f"p_{name}": 0.0 for name in set(AUG_NAMES) - chosen}
+    for name, p in AUG_DEFAULT_OFF.items():
+        if name in chosen:
+            kw[f"p_{name}"] = p
+    return Augment3D(**kw)
+
+
+def load_crops(folds, crops_dir=None):
+    d = Path(crops_dir) if crops_dir else CFG.crops_dir
+    return {uid: np.load(d / f"{uid}.npy") for uid in folds["uid"]}
+
+
+def records(df):
+    return list(zip(df["uid"], df["is_pathologic"].astype(np.float32)))
+
+
+def worker_init(_):
+    np.random.seed(torch.initial_seed() % 2**32)
+
+
+def fit_temperature(y, probs):
+    lo = logit(np.clip(probs, 1e-6, 1 - 1e-6))
+    res = minimize_scalar(
+        lambda t: log_loss(y, np.clip(expit(lo / t), 1e-6, 1 - 1e-6)),
+        bounds=(0.25, 10.0), method="bounded",
+    )
+    return float(res.x)
+
+
+def build_model(args, view):
+    import inspect
+
+    cls = ModelRegistry.get(args.model)
+    kwargs = {"pretrained": not args.no_pretrained, "pool": args.pool, "head": args.head}
+    extra = {"in_chans": getattr(view, "channels", None), "width_mult": args.width_mult,
+             "dropout": args.dropout3d}
+    accepted = inspect.signature(cls.__init__).parameters
+    for k, v in extra.items():
+        if k in accepted and v is not None:
+            kwargs[k] = v
+    return cls(**kwargs)
+
+
+def run_fold(k, folds, crops, view, args, run_dir, frames=None):
+    torch.manual_seed(CFG.seed + k + 1000 * args.seed_offset)
+    np.random.seed(CFG.seed + k + 1000 * args.seed_offset)
+    tr, va = folds[folds["fold"] != k], folds[folds["fold"] == k]
+    chimera = None
+    if args.chimera_frac > 0 and frames is None:
+        normals = [crops[u] for u in tr.loc[tr["is_pathologic"] == 0.0, "uid"]]
+        chimera = ChimeraMixer(normals)
+    aug = build_augment(args.aug)
+    frame_aug = None
+    if frames is not None and aug is not None:
+        frame_aug = build_augment(args.aug)
+        frame_aug.p_flip = 0.0  # the shared flip is drawn once in the dataset
+        aug.p_flip = 0.0
+    pos_chimera, sides = None, None
+    if args.chimera_pos_frac > 0 and frames is None:
+        from training.chimera_pos import PositiveChimeraMixer
+        feats = pd.read_csv(CFG.repo_dir / "output" / "features.csv").set_index("uid")
+        sides = {u: ("L" if feats.loc[u, "sbr_putamen_l"] < feats.loc[u, "sbr_putamen_r"]
+                     else "R") for u in folds["uid"]}
+        abn = tr.loc[tr["is_pathologic"] == 1.0, "uid"]
+        pos_chimera = PositiveChimeraMixer([(crops[u], sides[u]) for u in abn])
+    train_ds = DatScanDataset(crops, records(tr), view, augment=aug,
+                              chimera=chimera, chimera_frac=args.chimera_frac,
+                              frames=frames, frame_augment=frame_aug,
+                              pos_chimera=pos_chimera, pos_frac=args.chimera_pos_frac,
+                              worse_sides=sides)
+    loader_kw = dict(batch_size=args.batch_size, num_workers=args.workers,
+                     pin_memory=True, worker_init_fn=worker_init)
+    train_loader = DataLoader(train_ds, shuffle=True, drop_last=True, **loader_kw)
+    val_loader = DataLoader(DatScanDataset(crops, records(va), view, frames=frames),
+                            **loader_kw)
+
+    model = build_model(args, view)
+    trainer = Trainer(model, args.device, epochs=args.epochs, lr=args.lr,
+                      weight_decay=args.weight_decay, ema_decay=args.ema_decay,
+                      label_smoothing=args.label_smoothing,
+                      loss=args.loss, focal_gamma=args.focal_gamma)
+    print(f"fold {k}: train {len(tr)}, val {len(va)}")
+    best, history = trainer.fit(train_loader, val_loader)
+
+    fold_dir = run_dir / f"fold{k}"
+    fold_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(history).to_csv(fold_dir / "metrics.csv", index=False)
+    torch.save(best["state"], fold_dir / "best_ema.pt")
+
+    model.load_state_dict(best["state"])
+    probs, y = trainer.predict(val_loader)
+    if not args.no_tta:
+        flip_loader = DataLoader(
+            DatScanDataset(crops, records(va), view, force_flip=True, frames=frames),
+            **loader_kw
+        )
+        probs_f, _ = trainer.predict(flip_loader)
+        probs = (probs + probs_f) / 2
+    preds = pd.DataFrame({"uid": va["uid"].values, "is_pathologic": y, "pred": probs})
+    preds.to_csv(fold_dir / "val_preds.csv", index=False)
+    print(f"fold {k} best epoch {best['epoch']}: "
+          f"val_ll {log_loss(y, np.clip(probs, 1e-6, 1 - 1e-6)):.4f}  "
+          f"val_auc {roc_auc_score(y, probs):.4f} (with TTA: {not args.no_tta})")
+    return preds
+
+
+def main():
+    args = parse_args()
+    folds_path = Path(args.folds_csv or CFG.folds_csv)
+    if folds_path.is_dir() or not folds_path.exists():
+        raise SystemExit(
+            f"--folds-csv must be a fold assignment CSV (got {folds_path}). "
+            "For harmonized/alternative crops use --crops-dir <directory> instead; "
+            f"the default folds file is {CFG.folds_csv}."
+        )
+    folds = pd.read_csv(folds_path)
+    if args.crops_dir and not Path(args.crops_dir).is_dir():
+        raise SystemExit(f"--crops-dir {args.crops_dir} does not exist — "
+                         "run scripts/prepare_dataset.py (with --harmonize-to) first.")
+    view = build_view(args)
+    crops = load_crops(folds, args.crops_dir)
+    frames = None
+    if args.view == "fusion3d":
+        fdir = CFG.prepared_dir / "frames"
+        frames = {uid: np.load(fdir / f"{uid}.npy") for uid in folds["uid"]}
+    run_name = args.run_name or f"{args.model}_{args.view}"
+    run_dir = CFG.runs_dir / run_name
+    has_results = run_dir.exists() and any(run_dir.glob("fold*/val_preds.csv"))
+    if has_results and not args.overwrite:
+        raise SystemExit(
+            f"run directory {run_dir} already contains results — "
+            "choose a different --run-name or pass --overwrite to replace them."
+        )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "args.json").write_text(json.dumps(vars(args), indent=2))
+
+    fold_ids = (
+        sorted(folds["fold"].unique()) if args.fold == "all" else [int(args.fold)]
+    )
+    all_preds = [run_fold(k, folds, crops, view, args, run_dir, frames=frames)
+                 for k in fold_ids]
+
+    if args.fold == "all":
+        oof = pd.concat(all_preds, ignore_index=True)
+        oof.to_csv(run_dir / "oof.csv", index=False)
+        y, p = oof["is_pathologic"].values, oof["pred"].values
+        temp = fit_temperature(y, p)
+        p_cal = expit(logit(np.clip(p, 1e-6, 1 - 1e-6)) / temp)
+        summary = {
+            "n": int(len(y)),
+            "oof_auroc": float(roc_auc_score(y, p)),
+            "oof_log_loss": float(log_loss(y, np.clip(p, 1e-6, 1 - 1e-6))),
+            "temperature": temp,
+            "oof_log_loss_calibrated": float(log_loss(y, np.clip(p_cal, 1e-6, 1 - 1e-6))),
+            "oof_log_loss_calibrated_clipped": float(log_loss(y, np.clip(p_cal, 0.02, 0.98))),
+        }
+        (run_dir / "oof_summary.json").write_text(json.dumps(summary, indent=2))
+        print("OOF:", json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()

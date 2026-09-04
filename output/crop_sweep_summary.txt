@@ -1,0 +1,13 @@
+crop-size sweep (margin vox/side; base box 44x38x26 @2mm; seed-noise floor ~0.004):
+  m=-5 cnn3d_m-5_s0: auroc 0.9477  cal+clip 0.2917  band missed 51/210
+  m=-5 cnn3d_m-5_s1: auroc 0.9460  cal+clip 0.3009  band missed 54/210
+  m=-3 cnn3d_m-3_s0: auroc 0.9542  cal+clip 0.2775  band missed 48/210
+  m=-3 cnn3d_m-3_s1: auroc 0.9538  cal+clip 0.2767  band missed 48/210
+  m=+0 cnn3d_crop: auroc 0.9593  cal+clip 0.2592  band missed 37/210
+  m=+0 cnn3d_seed1: auroc 0.9610  cal+clip 0.2557  band missed 40/210
+  m=+2 cnn3d_m2: MISSING
+  m=+2 cnn3d_m2_s1: MISSING
+  m=+4 cnn3d_m4_s0: auroc 0.9612  cal+clip 0.2522  band missed 36/210
+  m=+4 cnn3d_m4_s1: auroc 0.9631  cal+clip 0.2462  band missed 35/210
+  m=+6 cnn3d_m6_s0: auroc 0.9611  cal+clip 0.2517  band missed 35/210
+  m=+6 cnn3d_m6_s1: auroc 0.9606  cal+clip 0.2557  band missed 43/210

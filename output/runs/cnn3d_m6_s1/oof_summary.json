@@ -1,0 +1,8 @@
+{
+  "n": 1353,
+  "oof_auroc": 0.960623429302059,
+  "oof_log_loss": 0.25125415242840093,
+  "temperature": 1.113475383352618,
+  "oof_log_loss_calibrated": 0.24988846464052297,
+  "oof_log_loss_calibrated_clipped": 0.2557087032334479
+}

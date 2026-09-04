@@ -1,0 +1,21 @@
+# competition data and anything derived from patient scans — never push
+/data
+/prepared
+output/frame_cache/
+output/cohort_mean_frame.npy
+output/viewer3d/
+
+# heavy artifacts
+*.pt
+*.pth
+*.zip
+/submission_build
+*.log
+*.pyc
+__pycache__/
+nohup.out
+
+# rendered images of individual patient scans — also competition data
+output/galleries/
+output/saliency/
+output/error_analysis/*.png

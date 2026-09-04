@@ -1,0 +1,22 @@
+{
+  "model": "efficientnet_b0",
+  "view": "mip",
+  "fold": "all",
+  "epochs": 40,
+  "batch_size": 64,
+  "lr": 0.0003,
+  "weight_decay": 0.0001,
+  "ema_decay": 0.999,
+  "chimera_frac": 0.0,
+  "label_smoothing": 0.0,
+  "aug": "all",
+  "slice_k": 2,
+  "no_pretrained": false,
+  "no_tta": false,
+  "workers": 8,
+  "device": "cuda:0",
+  "run_name": "effb0_mip_ref40",
+  "folds_csv": null,
+  "crops_dir": null,
+  "overwrite": false
+}

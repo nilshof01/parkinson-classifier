@@ -1,0 +1,57 @@
+{
+  "dataset": {
+    "n_label_rows": 1362,
+    "n_files_on_disk": 1362,
+    "n_rows_without_file": 0,
+    "n_files_without_label": 0,
+    "n_usable": 1362,
+    "n_normal": 615,
+    "n_abnormal": 747,
+    "n_label_missing_or_other": 0,
+    "prevalence_abnormal": 0.5484581497797357
+  },
+  "headers": {
+    "n_scans": 1362,
+    "n_unique_spacings": 52,
+    "top_spacings": {
+      "2.46x2.46x2.46": 528,
+      "3.895x3.895x3.9": 254,
+      "2.3x2.3x2.3": 207,
+      "2.398x2.398x2.398": 143,
+      "3.895x3.895x3.895": 71,
+      "3.296x3.296x3.3": 26,
+      "1.468x1.468x1.5": 25,
+      "3.305x3.305x3.0": 13
+    },
+    "n_unique_dims": 66,
+    "top_dims": {
+      "256x256x256": 460,
+      "128x128x128": 295,
+      "128x128x87": 143,
+      "128x128x45": 46,
+      "128x128x43": 38,
+      "128x128x39": 33,
+      "128x128x40": 29,
+      "128x128x42": 28
+    },
+    "n_isotropic": 967,
+    "dtypes": {
+      "uint16": 1346,
+      "int16": 16
+    },
+    "spacing_x_min": 1.3722200393676758,
+    "spacing_x_max": 4.419600009918213
+  },
+  "qc": {
+    "n_errors": 0,
+    "n_qc_fail": 9,
+    "n_analyzed": 1353
+  },
+  "multivariable_cv": {
+    "n": 1352,
+    "n_excluded_nan": 1,
+    "oof_auroc": 0.7738070272644793,
+    "oof_log_loss": 0.5718020923083388,
+    "baseline_log_loss_prevalence": 0.6887981935040789
+  }
+}
