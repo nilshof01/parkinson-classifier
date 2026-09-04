@@ -5,8 +5,9 @@ stratified 5-fold split (n = 1,353) with nested validation for anything fitted.
 
 ## Current standing
 
-**Best validated system: 13-member ensemble + shrunk logistic stack (C = 0.005, logit space)
-+ temperature + clip → nested log loss 0.2255** (equal mean of the same pool: 0.2267).
+**Best validated system: 14-member ensemble + shrunk logistic stack (C = 0.005, logit space)
++ temperature + clip → nested log loss 0.2253** (equal mean of the same pool: 0.2265; the
+14th member is the m10-crop seed pair, adopted by nested audition).
 Public leaderboard snapshot (2026-09-03): #1 = 0.2192 / AUROC 0.9709, #2 = 0.2286,
 #3 = 0.2335. The OOF estimate sits between #1 and #2; the remaining gap to #1 is
 predominantly discrimination (AUROC 0.971 vs ≈0.957), not calibration (ours measured
@@ -36,8 +37,9 @@ Progression: 0.447 (XGBoost baseline) → 0.297 (first 2D CNN) → 0.2592 (3D CN
 1. **First submission** (user action): rebuild zip with current pool + serialized stack,
    smoke test, then one full submission — measures the OOF↔leaderboard offset that every
    later decision needs. Risk check first: runtime repo's torch version vs our 2.10 traces.
-2. **Extended crop sweep verdict** (running): m8/m10 ×2 seeds; adopt only if clearly
-   below 0.2492 mean.
+2. **Extended crop sweep verdict — RESOLVED 2026-09-05**: m8 mean 0.2526, m10 mean 0.2499
+   vs m4 mean 0.2492 → plateau from m4 through m10; m4 stays the standard. The m10 seed
+   pair joined the ensemble as a diversity member (+0.0002 nested).
 3. **Seed farm** (~1 GPU-day, mechanical): grow cnn3d-m4(+chimera) and fusion-m4 families
    to 6–8 seeds; each seed historically worth ~0.001 to its family average.
 4. **Capacity probe** (~2 h): one cnn3d ×2 width at m4 with the full frozen recipe and
@@ -73,7 +75,8 @@ independent negative tests — the ~25-scan hard core is a site-threshold/label 
 ## Open questions
 
 1. Does the OOF→public-leaderboard offset confirm our standing (step 1)?
-2. Is the crop-size curve a plateau at m4 or still rising (step 2)?
+2. ~~Is the crop-size curve a plateau at m4 or still rising?~~ Resolved: plateau
+   (m4 ≈ m10, m6/m8 slightly worse; no size beats m4).
 3. Can representation work (steps 4–5) close any of the ~0.014 AUROC gap to the leader,
    or is that gap public-split overfitting on their side?
 4. Site-prior: exploit or abstain?
