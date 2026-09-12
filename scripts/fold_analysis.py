@@ -1,4 +1,4 @@
-"""Fold-level analysis: why do some folds validate much better than others?
+r"""Fold-level analysis: why do some folds validate much better than others?
 
 Loads per-fold val_preds.csv, folds.csv, features.csv, and header_stats.csv,
 then characterises each fold's validation set and scores to find what differs.
