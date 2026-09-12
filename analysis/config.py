@@ -1,10 +1,26 @@
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Set SCAN_REPO to the repository root to override the default Linux path.
+# Example Windows: $env:SCAN_REPO = "C:\Users\nilsh\Projects\DaT Parkinson's Challenge"
+# Example Linux:   export SCAN_REPO=/home/niho/scan-repo
+_DEFAULT_REPO = Path(os.environ.get("SCAN_REPO", "/home/niho/scan-repo"))
+
+# The raw NIfTI folder may have a site-specific suffix (e.g. niftis_utCGpHE).
+# Set NIFTI_DIR to the absolute path of that folder to override auto-detection.
+_NIFTI_DIR_OVERRIDE = os.environ.get("NIFTI_DIR", None)
+
+# On Windows, multiprocessing uses spawn (not fork), so fewer workers are better.
+# Default: 16 on Linux, 4 on Windows. Override with N_WORKERS env var.
+import platform as _platform
+_DEFAULT_WORKERS = 4 if _platform.system() == "Windows" else 16
+_N_WORKERS = int(os.environ.get("N_WORKERS", _DEFAULT_WORKERS))
 
 
 @dataclass
 class AnalysisConfig:
-    repo_dir: Path = Path("/home/niho/scan-repo")
+    repo_dir: Path = _DEFAULT_REPO
     target_spacing_mm: float = 2.0
     # common frame: RAS, isotropic, centered on the brain-mask centroid
     frame_shape: tuple = (96, 112, 96)  # x (L->R), y (P->A), z (I->S)
@@ -16,7 +32,7 @@ class AnalysisConfig:
     # ROI sphere radii (voxels at 2 mm)
     caudate_radius_vox: int = 4
     putamen_radius_vox: int = 5
-    n_workers: int = 16
+    n_workers: int = _N_WORKERS
     n_bootstrap: int = 1000
     cv_folds: int = 5
     seed: int = 17
@@ -30,13 +46,20 @@ class AnalysisConfig:
 
     def __post_init__(self):
         self.data_dir = self.repo_dir / "data"
-        self.nifti_dir = self.data_dir / "niftis"
+        if _NIFTI_DIR_OVERRIDE:
+            self.nifti_dir = Path(_NIFTI_DIR_OVERRIDE)
+        else:
+            # Auto-detect: prefer "niftis", then the first "niftis_*" subfolder
+            plain = self.data_dir / "niftis"
+            if plain.exists():
+                self.nifti_dir = plain
+            else:
+                candidates = sorted(self.data_dir.glob("niftis*"))
+                self.nifti_dir = candidates[0] if candidates else plain
         self.labels_csv = self.data_dir / "train_labels_JNDlMjr.csv"
         self.output_dir = self.repo_dir / "output"
         self.figures_dir = self.output_dir / "figures"
-        self.cache_dir = Path(
-            "/tmp/claude-1007/-home-niho/3ce5ea2d-63cc-4584-86bd-7c8531b69db3/scratchpad/frame_cache"
-        )
+        self.cache_dir = self.repo_dir / ".cache" / "frames"
         for d in (self.output_dir, self.figures_dir, self.cache_dir):
             d.mkdir(parents=True, exist_ok=True)
 

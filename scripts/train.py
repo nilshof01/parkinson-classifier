@@ -49,6 +49,23 @@ def parse_args():
     p.add_argument("--chimera-pos-frac", type=float, default=0.0,
                    help="fraction of abnormal samples replaced by worst-side "
                         "abnormal+abnormal chimeras")
+    p.add_argument("--posterior-frac", type=float, default=0.0,
+                   help="fraction of normal samples converted to bilateral posterior-gradient "
+                        "synthetic abnormals (label flipped to 1)")
+    p.add_argument("--posterior-uni-frac", type=float, default=0.0,
+                   help="fraction of normal samples converted to unilateral posterior-gradient "
+                        "synthetic abnormals (label flipped to 1)")
+    p.add_argument("--posterior-sigma", type=float, default=5.0,
+                   help="Gaussian sigma (voxels, ~2 mm/vox) for posterior reduction ramp")
+    p.add_argument("--posterior-min-factor", type=float, default=0.30,
+                   help="minimum attenuation factor at the posterior edge (severity ceiling)")
+    p.add_argument("--posterior-max-factor", type=float, default=0.75,
+                   help="maximum attenuation factor at the posterior edge (severity floor)")
+    p.add_argument("--asym-jitter-frac", type=float, default=0.0,
+                   help="fraction of normal samples to receive a random L-R scale jitter "
+                        "within the healthy asymmetry range (label unchanged)")
+    p.add_argument("--asym-jitter-max-ai", type=float, default=0.10,
+                   help="upper bound on the asymmetry index applied by asym-jitter")
     p.add_argument("--label-smoothing", type=float, default=0.0,
                    help="BCE target smoothing, e.g. 0.05 -> targets 0.05/0.95")
     p.add_argument("--pool", default=None, choices=["avg", "max", "catavgmax"],
@@ -165,14 +182,33 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
         from training.chimera_pos import PositiveChimeraMixer
         feats = pd.read_csv(CFG.repo_dir / "output" / "features.csv").set_index("uid")
         sides = {u: ("L" if feats.loc[u, "sbr_putamen_l"] < feats.loc[u, "sbr_putamen_r"]
-                     else "R") for u in folds["uid"]}
-        abn = tr.loc[tr["is_pathologic"] == 1.0, "uid"]
+                     else "R") if u in feats.index else "L"
+                 for u in folds["uid"]}
+        # Only use donors whose worse side is known from features.csv
+        abn = tr.loc[(tr["is_pathologic"] == 1.0) & tr["uid"].isin(feats.index), "uid"]
         pos_chimera = PositiveChimeraMixer([(crops[u], sides[u]) for u in abn])
+    posterior_reducer = None
+    if (args.posterior_frac > 0 or args.posterior_uni_frac > 0) and frames is None:
+        from training.augment_posterior import PosteriorPutamenReduction
+        posterior_reducer = PosteriorPutamenReduction(
+            sigma_y=args.posterior_sigma,
+            min_factor=args.posterior_min_factor,
+            max_factor=args.posterior_max_factor,
+        )
+    asym_jitter = None
+    if args.asym_jitter_frac > 0 and frames is None:
+        from training.augment_asymmetry import AsymmetryJitter
+        asym_jitter = AsymmetryJitter(max_ai=args.asym_jitter_max_ai)
     train_ds = DatScanDataset(crops, records(tr), view, augment=aug,
                               chimera=chimera, chimera_frac=args.chimera_frac,
                               frames=frames, frame_augment=frame_aug,
                               pos_chimera=pos_chimera, pos_frac=args.chimera_pos_frac,
-                              worse_sides=sides)
+                              worse_sides=sides,
+                              posterior_reducer=posterior_reducer,
+                              posterior_frac=args.posterior_frac,
+                              posterior_uni_frac=args.posterior_uni_frac,
+                              asym_jitter=asym_jitter,
+                              asym_jitter_frac=args.asym_jitter_frac)
     loader_kw = dict(batch_size=args.batch_size, num_workers=args.workers,
                      pin_memory=True, worker_init_fn=worker_init)
     train_loader = DataLoader(train_ds, shuffle=True, drop_last=True, **loader_kw)
@@ -222,6 +258,12 @@ def main():
     if args.crops_dir and not Path(args.crops_dir).is_dir():
         raise SystemExit(f"--crops-dir {args.crops_dir} does not exist — "
                          "run scripts/prepare_dataset.py (with --harmonize-to) first.")
+    crops_d = Path(args.crops_dir) if args.crops_dir else CFG.crops_dir
+    available = {uid for uid in folds["uid"] if (crops_d / f"{uid}.npy").exists()}
+    if len(available) < len(folds):
+        print(f"warning: {len(folds) - len(available)} scans in folds.csv have no crop "
+              f"in {crops_d} — skipping them (prepared from a subset of the full cohort)")
+        folds = folds[folds["uid"].isin(available)].reset_index(drop=True)
     view = build_view(args)
     crops = load_crops(folds, args.crops_dir)
     frames = None

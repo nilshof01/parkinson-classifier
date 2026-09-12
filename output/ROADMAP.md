@@ -72,6 +72,80 @@ ROI/SBR features as model inputs (superseded) · slices25d view (12 mm slab too 
 smaller crops (sharply worse) · age-proxy/context hypotheses for the mild band (three
 independent negative tests — the ~25-scan hard core is a site-threshold/label floor).
 
+## Augmentation experiments (started 2026-09-04, continuing ~2026-09-11)
+
+Three new augmentations implemented and activated via CLI args in `scripts/train.py`:
+
+| Arg | What it does | Label effect |
+|---|---|---|
+| `--posterior-frac` | Bilateral half-Gaussian ramp along P→A axis, simulates early DaT loss | normal → abnormal |
+| `--posterior-uni-frac` | Same but one hemisphere only | normal → abnormal |
+| `--asym-jitter-frac` | Random L-R scale within healthy AI range (≤10%) | unchanged |
+
+Implementation: `training/augment_posterior.py`, `training/augment_asymmetry.py`.
+Dispatch in `training/dataset.py` is mutually exclusive (single random draw per sample).
+
+### Running / queued experiments
+
+**cnn3d_m4_post_bil_s0** — bilateral posterior augmentation (frac=0.20), chimera 0.25/0.25
+- Fold 0 completed: val_ll **0.2023**, val_auc **0.9759** (with TTA) — best epoch 23
+- STATUS: interrupted after fold 0; needs folds 1–4 to complete (rerun with `--overwrite`)
+- Command:
+  ```
+  python scripts/train.py --model cnn3d --view volume3d \
+    --chimera-frac 0.25 --chimera-pos-frac 0.25 --posterior-frac 0.20 \
+    --crops-dir "C:\Users\nilsh\Projects\DaT Parkinson's Challenge\prepared\crops_m4" \
+    --run-name cnn3d_m4_post_bil_s0 --workers 0 --epochs 30 --overwrite
+  ```
+
+**cnn3d_m4_baseline_s0** — same recipe without posterior augmentation (control for local comparison)
+- STATUS: not yet run
+- Command:
+  ```
+  python scripts/train.py --model cnn3d --view volume3d \
+    --chimera-frac 0.25 --chimera-pos-frac 0.25 \
+    --crops-dir "C:\Users\nilsh\Projects\DaT Parkinson's Challenge\prepared\crops_m4" \
+    --run-name cnn3d_m4_baseline_s0 --workers 0 --epochs 30
+  ```
+
+**cnn3d_m4_post_uni_s0** — unilateral posterior augmentation (frac=0.15)
+- STATUS: not yet run
+- Command:
+  ```
+  python scripts/train.py --model cnn3d --view volume3d \
+    --chimera-frac 0.25 --chimera-pos-frac 0.25 --posterior-uni-frac 0.15 \
+    --crops-dir "C:\Users\nilsh\Projects\DaT Parkinson's Challenge\prepared\crops_m4" \
+    --run-name cnn3d_m4_post_uni_s0 --workers 0 --epochs 30
+  ```
+
+**effb0_mipasym_asymjitter_s0** — asymmetry jitter on the mipasym 2D model
+- STATUS: not yet run
+- Command:
+  ```
+  python scripts/train.py --model efficientnet_b0 --view mipasym \
+    --chimera-frac 0.25 --asym-jitter-frac 0.20 \
+    --run-name effb0_mipasym_asymjitter_s0 --workers 0 --epochs 30
+  ```
+
+### Remaining research hypotheses (from MODELS.md)
+1. **A/P difference channel** — same trick as mipasym but front-vs-back within each side;
+   explicit anterior/posterior gradient input channel for the 3D or 2D model.
+   Targets the mild bilateral band directly.
+2. **Hard-case detector / abstainer** — train a second head or separate model to recognise
+   the mild-band cases and output ~0.5 rather than a confident wrong answer.
+3. **Seed farm** — grow cnn3d_m4_post_bil to 3–5 seeds once the single-seed OOF confirms
+   the augmentation helps; each seed worth ~0.001 to the family average.
+
+### Windows setup notes (for reproducibility)
+- Set `$env:SCAN_REPO = "C:\Users\nilsh\Projects\DaT Parkinson's Challenge"` each session
+  (or run `[System.Environment]::SetEnvironmentVariable("SCAN_REPO", "...", "User")` once)
+- Always add `--workers 0` on Windows (avoids CUDA DLL paging file errors)
+- Prepared data at `SCAN_REPO\prepared\` (1186 scans; 167 excluded due to MemoryError
+  during preprocessing — large-FOV outliers, consistently excluded)
+- folds.csv generated from the 1186 available scans; fold assignments differ from the
+  Linux 1353-scan split — OOF numbers are not directly comparable to Linux models but
+  are internally consistent for comparing augmented vs. baseline runs
+
 ## Open questions
 
 1. Does the OOF→public-leaderboard offset confirm our standing (step 1)?
