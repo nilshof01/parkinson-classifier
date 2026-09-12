@@ -40,11 +40,10 @@ Progression: 0.447 (XGBoost baseline) → 0.297 (first 2D CNN) → 0.2592 (3D CN
 2. **Extended crop sweep verdict — RESOLVED 2026-09-05**: m8 mean 0.2526, m10 mean 0.2499
    vs m4 mean 0.2492 → plateau from m4 through m10; m4 stays the standard. The m10 seed
    pair joined the ensemble as a diversity member (+0.0002 nested).
-3. **Seed farm** (~1 GPU-day, mechanical): grow cnn3d-m4(+chimera) and fusion-m4 families
-   to 6–8 seeds; each seed historically worth ~0.001 to its family average.
-4. **Capacity probe** (~2 h): one cnn3d ×2 width at m4 with the full frozen recipe and
-   80-epoch schedule — retests capacity under the modern recipe (the old width test
-   predates m4/chimera/zoom).
+3. **Seed farm** (~1 GPU-day, mechanical): use `cnn3d_m4_drop01_lr3e4` as the new seed
+   target (see hyperparameter sweep below); grow to 3–5 seeds once full OOF confirms.
+4. **Capacity probe — RESOLVED 2026-09-12**: width ×2 hurt (fold-0 val_ll 0.1980 vs
+   0.1848 baseline). More capacity overfits at this dataset size. Do not revisit.
 5. **SSL pretraining** (~1 day, uncertain): masked-volume pretraining on the 1,353
    training scans only (test-set use prohibited), fine-tune the champion; the main
    untested representation lever and the most plausible source of the leader's AUROC edge.
@@ -134,7 +133,14 @@ OOF: {
     --crops-dir $SCAN_REPO/prepared/crops_m4 \
     --run-name cnn3d_m4_post_uni_s0 --epochs 30
   ```
-
+OOF: {
+  "n": 1353,
+  "oof_auroc": 0.954955689784401,
+  "oof_log_loss": 0.2668159306049347,
+  "temperature": 0.9153468674809137,
+  "oof_log_loss_calibrated": 0.26592326164245605,
+  "oof_log_loss_calibrated_clipped": 0.27128398418426514
+}
 **effb0_mipasym_asymjitter_s0** — asymmetry jitter on the mipasym 2D model
 - STATUS: completed
 - OOF ll (cal+clip) **0.3294**, AUROC 0.9302 — worse than base effb0_mipasym (0.3048);
@@ -154,6 +160,44 @@ OOF: {
    the mild-band cases and output ~0.5 rather than a confident wrong answer.
 3. **Seed farm** — baseline (cnn3d_m4_baseline_s0, OOF 0.2416) is now the reference;
    grow to 3–5 seeds once sweep confirms optimal config; each seed worth ~0.001.
+
+## cnn3d hyperparameter sweep — RESOLVED 2026-09-12
+
+Fold-0 sweep over LR, pooling/head, weight decay, dropout, width multiplier.
+All runs: cnn3d, volume3d view, chimera 0.25/0.25, crops_m4, 40 epochs.
+Metric: best val_log_loss on fold 0 (no TTA).
+
+| Run | val_ll (fold 0) | best epoch | verdict |
+|---|---|---|---|
+| sw_drop_01 (dropout=0.1) | **0.1783** | 26 | **new default — clear winner** |
+| sw_drop_05 (dropout=0.5) | 0.1823 | 28 | better than default 0.3 |
+| sw_lr_3e4 (lr=3e-4) | 0.1843 | 23 | marginal improvement over 1e-3 |
+| sw_drop_03 / sw_lr_1e3 / sw_pool_avg_lin / sw_wd_1e4 / sw_width_1x | 0.1848 | 26 | current defaults |
+| sw_wd_1e5 | 0.1850 | 31 | neutral |
+| sw_wd_1e3 | 0.1852 | 26 | neutral |
+| sw_lr_3e3 (lr=3e-3) | 0.1929 | 25 | worse |
+| sw_pool_avg_mlp | 0.1946 | 30 | worse |
+| sw_width_2x (width_mult=2.0) | 0.1980 | 39 | worse — overfits |
+| sw_pool_cat_mlp (catavgmax+mlp) | 0.2485 | 38 | **much worse — do not use on cnn3d** |
+
+**Key findings:**
+- Dropout 0.1 is a meaningful improvement (−0.0065 on fold 0). Model was over-regularised at 0.3.
+- catavgmax pooling destroys cnn3d (0.2485) — opposite effect from effb0 where it was best.
+  avg pooling is correct for cnn3d.
+- LR 3e-4 marginally beats 1e-3. Combined with dropout 0.1 for the next seed.
+- Weight decay is insensitive across 1e-5 to 1e-3. Keep 1e-4.
+- Width ×2 hurts — dataset too small for the extra capacity.
+
+**Updated frozen recipe for cnn3d:** dropout=0.1, lr=3e-4, pool=avg, head=linear, wd=1e-4.
+
+**Next run (all 5 folds):**
+```bash
+python scripts/train.py --model cnn3d --view volume3d \
+    --chimera-frac 0.25 --chimera-pos-frac 0.25 \
+    --crops-dir $SCAN_REPO/prepared/crops_m4 \
+    --dropout3d 0.1 --lr 3e-4 \
+    --run-name cnn3d_m4_drop01_lr3e4_s0 --epochs 40
+```
 
 ## SSL pretraining experiment (started 2026-09-12)
 

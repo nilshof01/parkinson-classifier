@@ -74,8 +74,8 @@ for fold_dir in sorted(runs_dir.glob("sw_*/fold0")):
         continue
     import csv
     rows_m = list(csv.DictReader(open(metrics_file)))
-    best = min(rows_m, key=lambda r: float(r["val_ll"]))
-    rows.append((fold_dir.parent.name, float(best["val_ll"]), int(best["epoch"])))
+    best = min(rows_m, key=lambda r: float(r["val_log_loss"]))
+    rows.append((fold_dir.parent.name, float(best["val_log_loss"]), int(best["epoch"])))
 
 rows.sort(key=lambda x: x[1])
 print(f"{'run':<30} {'val_ll':>8} {'best_epoch':>12}")
