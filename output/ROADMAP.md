@@ -233,6 +233,16 @@ python scripts/train.py --model cnn3d --view volume3d \
 (0.2416). If lower → pretraining helps, grow to 3+ seeds. If neutral/worse → dataset
 is too small for SSL to find useful structure; validated negative.
 
+
+OOF: {
+  "n": 1353,
+  "oof_auroc": 0.9597802125126758,
+  "oof_log_loss": 0.2488415539264679,
+  "temperature": 1.0624369692973814,
+  "oof_log_loss_calibrated": 0.2484322190284729,
+  "oof_log_loss_calibrated_clipped": 0.254264771938324
+}
+
 ## A/P difference channel experiment (not yet started)
 
 **Hypothesis:** the earliest DaT loss sign is the posterior putamen fading before the
