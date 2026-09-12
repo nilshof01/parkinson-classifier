@@ -21,6 +21,7 @@ from training.models.registry import ModelRegistry
 from training.trainer import Trainer
 from training.view_mip import TriaxialMip
 from training.view_mip_asym import MipWithAsymmetry
+from training.view_mip_apgrad import MipWithApGradient
 from training.view_volume import VolumeView
 from training.view_volume_asym import VolumeWithAsymmetry
 from training.view_slices import AdjacentSlices
@@ -32,8 +33,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Train a model on prepared DaT crops")
     p.add_argument("--model", default="efficientnet_b0", choices=ModelRegistry.names())
     p.add_argument("--view", default="mip",
-                   choices=["mip", "slices25d", "mipasym", "volume3d", "volume3dasym",
-                            "fusion3d"])
+                   choices=["mip", "slices25d", "mipasym", "mipapgrad", "volume3d",
+                            "volume3dasym", "fusion3d"])
     p.add_argument("--width-mult", type=float, default=1.0, help="cnn3d width multiplier")
     p.add_argument("--dropout3d", type=float, default=0.3, help="cnn3d head dropout")
     p.add_argument("--seed-offset", type=int, default=0,
@@ -103,6 +104,8 @@ def build_view(args):
         return TriaxialMip(CFG.input_size)
     if args.view == "mipasym":
         return MipWithAsymmetry(CFG.input_size)
+    if args.view == "mipapgrad":
+        return MipWithApGradient(CFG.input_size)
     if args.view in ("volume3d", "fusion3d"):
         return VolumeView()
     if args.view == "volume3dasym":
