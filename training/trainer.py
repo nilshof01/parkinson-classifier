@@ -33,14 +33,19 @@ class Trainer:
         )
         use_amp = self.device.startswith("cuda")
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
-        if self.loss_name == "focal":
-            def criterion(logits, y):
+        def criterion(logits, y, w=None):
+            if self.loss_name == "focal":
                 ce = nn.functional.binary_cross_entropy_with_logits(
                     logits, y, reduction="none")
                 pt = torch.exp(-ce)
-                return ((1 - pt) ** self.focal_gamma * ce).mean()
-        else:
-            criterion = nn.BCEWithLogitsLoss()
+                per_sample = (1 - pt) ** self.focal_gamma * ce
+            else:
+                per_sample = nn.functional.binary_cross_entropy_with_logits(
+                    logits, y, reduction="none")
+            if w is not None:
+                per_sample = per_sample * w
+            return per_sample.mean()
+
         ema = Ema(self.model, self.ema_decay)
 
         best = {"log_loss": float("inf"), "state": None, "epoch": -1}
@@ -48,13 +53,15 @@ class Trainer:
         for epoch in range(self.epochs):
             self.model.train()
             losses = []
-            for x, y in train_loader:
+            for batch in train_loader:
+                x, y = batch[0], batch[1]
+                w = batch[2].to(self.device) if len(batch) == 3 else None
                 x, y = self._to_device(x), y.to(self.device)
                 opt.zero_grad(set_to_none=True)
                 if self.label_smoothing > 0:
                     y = y * (1 - 2 * self.label_smoothing) + self.label_smoothing
                 with torch.autocast("cuda", enabled=use_amp):
-                    loss = criterion(self.model(x), y)
+                    loss = criterion(self.model(x), y, w)
                 scaler.scale(loss).backward()
                 scaler.step(opt)
                 scaler.update()

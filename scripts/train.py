@@ -36,7 +36,7 @@ def parse_args():
                    choices=["mip", "slices25d", "mipasym", "mipapgrad", "volume3d",
                             "volume3dasym", "fusion3d"])
     p.add_argument("--width-mult", type=float, default=1.0, help="cnn3d width multiplier")
-    p.add_argument("--dropout3d", type=float, default=0.3, help="cnn3d head dropout")
+    p.add_argument("--dropout3d", type=float, default=0.1, help="cnn3d head dropout")
     p.add_argument("--seed-offset", type=int, default=0,
                    help="offsets the training seed (for seed-ensembling); folds unchanged")
     p.add_argument("--fold", default="all", help="fold index 0..4 or 'all'")
@@ -96,6 +96,9 @@ def parse_args():
     p.add_argument("--pretrained-encoder", default=None,
                    help="path to encoder_best.pt from pretrain_ssl.py; loads weights "
                         "into the cnn3d encoder before fine-tuning (cnn3d only)")
+    p.add_argument("--sbr-weight", action="store_true",
+                   help="up-weight mild positive samples by 1/sbr_putamen_min so the "
+                        "model pays more attention to hard borderline cases")
     return p.parse_args()
 
 
@@ -216,6 +219,20 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
     if args.asym_jitter_frac > 0 and frames is None:
         from training.augment_asymmetry import AsymmetryJitter
         asym_jitter = AsymmetryJitter(max_ai=args.asym_jitter_max_ai)
+    sample_weights = None
+    if getattr(args, "sbr_weight", False) and frames is None:
+        feats_path = CFG.repo_dir / "output" / "features.csv"
+        if feats_path.exists():
+            sbr = pd.read_csv(feats_path).set_index("uid")["sbr_putamen_min"]
+            sample_weights = {}
+            for uid, label in records(tr):
+                if label == 1.0 and uid in sbr.index:
+                    sample_weights[uid] = float(1.0 / max(sbr[uid], 0.1))
+                else:
+                    sample_weights[uid] = 1.0
+            # normalise so mean weight stays ~1
+            mean_w = np.mean(list(sample_weights.values()))
+            sample_weights = {u: w / mean_w for u, w in sample_weights.items()}
     train_ds = DatScanDataset(crops, records(tr), view, augment=aug,
                               chimera=chimera, chimera_frac=args.chimera_frac,
                               frames=frames, frame_augment=frame_aug,
@@ -225,7 +242,8 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
                               posterior_frac=args.posterior_frac,
                               posterior_uni_frac=args.posterior_uni_frac,
                               asym_jitter=asym_jitter,
-                              asym_jitter_frac=args.asym_jitter_frac)
+                              asym_jitter_frac=args.asym_jitter_frac,
+                              sample_weights=sample_weights)
     loader_kw = dict(batch_size=args.batch_size, num_workers=args.workers,
                      pin_memory=True, worker_init_fn=worker_init)
     train_loader = DataLoader(train_ds, shuffle=True, drop_last=True, **loader_kw)

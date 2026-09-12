@@ -25,7 +25,9 @@ class DatScanDataset(Dataset):
                  frames=None, frame_augment=None,
                  pos_chimera=None, pos_frac=0.0, worse_sides=None,
                  posterior_reducer=None, posterior_frac=0.0, posterior_uni_frac=0.0,
-                 asym_jitter=None, asym_jitter_frac=0.0):
+                 asym_jitter=None, asym_jitter_frac=0.0,
+                 sample_weights=None):
+        self.sample_weights = sample_weights  # dict uid -> float, or None
         self.pos_chimera = pos_chimera
         self.pos_frac = pos_frac
         self.worse_sides = worse_sides
@@ -92,6 +94,9 @@ class DatScanDataset(Dataset):
                 vol = self.augment(vol)
             if self.force_flip:
                 vol = vol[::-1].copy()
+            if self.sample_weights is not None:
+                w = torch.tensor(self.sample_weights.get(uid, 1.0), dtype=torch.float32)
+                return self.view(vol), y, w
             return self.view(vol), y
 
         frame = self.frames[uid].astype(np.float32)
