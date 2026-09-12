@@ -48,6 +48,7 @@ Progression: 0.447 (XGBoost baseline) → 0.297 (first 2D CNN) → 0.2592 (3D CN
 5. **SSL pretraining** (~1 day, uncertain): masked-volume pretraining on the 1,353
    training scans only (test-set use prohibited), fine-tune the champion; the main
    untested representation lever and the most plausible source of the leader's AUROC edge.
+   **STATUS: running** — see SSL pretraining section below.
 6. **10-fold refit** of the surviving roster (~1–2 GPU-days): +12.5% training data per
    model; folds change, so this lands after experiments freeze.
 7. **Full-data members**: one run per member on all 1,353 scans at the median best-epoch
@@ -125,32 +126,97 @@ OOF: {
   "oof_log_loss_calibrated_clipped": 0.2416343092918396
 }
 **cnn3d_m4_post_uni_s0** — unilateral posterior augmentation (frac=0.15)
-- STATUS: not yet run
+- STATUS: running on pod (2026-09-12)
 - Command:
   ```
   python scripts/train.py --model cnn3d --view volume3d \
     --chimera-frac 0.25 --chimera-pos-frac 0.25 --posterior-uni-frac 0.15 \
-    --crops-dir "C:\Users\nilsh\Projects\DaT Parkinson's Challenge\prepared\crops_m4" \
-    --run-name cnn3d_m4_post_uni_s0 --workers 0 --epochs 30
+    --crops-dir $SCAN_REPO/prepared/crops_m4 \
+    --run-name cnn3d_m4_post_uni_s0 --epochs 30
   ```
 
 **effb0_mipasym_asymjitter_s0** — asymmetry jitter on the mipasym 2D model
-- STATUS: not yet run
+- STATUS: completed
+- OOF ll (cal+clip) **0.3294**, AUROC 0.9302 — worse than base effb0_mipasym (0.3048);
+  asymmetry jitter did not help this model. Validated negative for this architecture.
 - Command:
   ```
   python scripts/train.py --model efficientnet_b0 --view mipasym \
     --chimera-frac 0.25 --asym-jitter-frac 0.20 \
-    --run-name effb0_mipasym_asymjitter_s0 --workers 0 --epochs 30
+    --run-name effb0_mipasym_asymjitter_s0 --epochs 30
   ```
-
+- OOF: auroc 0.9302 · ll 0.3435 · cal+clip ll 0.3294 · T 1.393
 ### Remaining research hypotheses (from MODELS.md)
 1. **A/P difference channel** — same trick as mipasym but front-vs-back within each side;
    explicit anterior/posterior gradient input channel for the 3D or 2D model.
-   Targets the mild bilateral band directly.
+   Targets the mild bilateral band directly. See A/P channel section below.
 2. **Hard-case detector / abstainer** — train a second head or separate model to recognise
    the mild-band cases and output ~0.5 rather than a confident wrong answer.
-3. **Seed farm** — grow cnn3d_m4_post_bil to 3–5 seeds once the single-seed OOF confirms
-   the augmentation helps; each seed worth ~0.001 to the family average.
+3. **Seed farm** — baseline (cnn3d_m4_baseline_s0, OOF 0.2416) is now the reference;
+   grow to 3–5 seeds once sweep confirms optimal config; each seed worth ~0.001.
+
+## SSL pretraining experiment (started 2026-09-12)
+
+**Hypothesis:** the cnn3d trains from random weights on ~1,082 scans per fold. A masked-volume
+pretraining stage forces the encoder to learn 3D anatomy (striatum location, uptake shape,
+left-right symmetry) before seeing any labels. This may close the AUROC gap to leaderboard
+#1 (0.971 vs 0.957), which is a discrimination gap most consistent with better representations.
+
+**Implementation:** `scripts/pretrain_ssl.py` + `training/models/decoder3d.py`.
+Randomly masks 40% of 6×6×6 voxel patches (12mm cubes — ~striatum scale) and trains
+encoder + decoder to reconstruct masked regions. MSE loss on masked voxels only.
+Fine-tune with `--pretrained-encoder` flag in `train.py`.
+
+**Status: running on pod (2026-09-12)**
+
+Stage 1 — pretraining:
+```bash
+python scripts/pretrain_ssl.py \
+    --crops-dir $SCAN_REPO/prepared/crops_m4 \
+    --epochs 80 --run-name ssl_m4
+```
+
+Stage 2 — fine-tuning:
+```bash
+python scripts/train.py --model cnn3d --view volume3d \
+    --chimera-frac 0.25 --chimera-pos-frac 0.25 \
+    --crops-dir $SCAN_REPO/prepared/crops_m4 \
+    --pretrained-encoder $SCAN_REPO/output/runs/ssl_m4/encoder_best.pt \
+    --run-name cnn3d_ssl_m4_s0
+```
+
+**How to interpret:** compare `cnn3d_ssl_m4_s0` OOF ll against `cnn3d_m4_baseline_s0`
+(0.2416). If lower → pretraining helps, grow to 3+ seeds. If neutral/worse → dataset
+is too small for SSL to find useful structure; validated negative.
+
+## A/P difference channel experiment (not yet started)
+
+**Hypothesis:** the earliest DaT loss sign is the posterior putamen fading before the
+anterior. The mipasym view already exploits the L-R asymmetry signal by adding a
+left-minus-mirrored-right channel. The same trick applied front-vs-back would make
+the A/P gradient explicit — a bilateral signal invisible to L-R difference.
+
+**Design:** new view `view_mip_apgrad.py` mirroring `view_mip_asym.py` but flipping
+along the Y axis (P→A) instead of X (L→R). The three channels would be:
+- Axial MIP (same as base)
+- Coronal MIP (same as base)  
+- Posterior-minus-anterior signed difference (new — highlights rear-fading putamen)
+
+**Why it might work:** the 39 missed abnormals in the mild band are bilaterally
+symmetric (mipasym sees nothing), but the posterior-gradient augmentation
+(`--posterior-frac`) showed this signal exists — the model just can't see it
+explicitly in the standard MIP. Making it an input channel removes the need for
+the model to discover it from pooled projections.
+
+**Command (once implemented):**
+```bash
+python scripts/train.py --model efficientnet_b0 --view mipapgrad \
+    --chimera-frac 0.25 \
+    --run-name effb0_mipapgrad_s0 --epochs 40
+```
+
+**Note:** requires implementing `training/view_mip_apgrad.py` (mirror of
+`view_mip_asym.py` with Y-axis flip instead of X-axis flip).
 
 ### Windows setup notes (for reproducibility)
 - Set `$env:SCAN_REPO = "C:\Users\nilsh\Projects\DaT Parkinson's Challenge"` each session
