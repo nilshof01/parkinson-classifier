@@ -1,6 +1,7 @@
 # competition data and anything derived from patient scans — never push
 /data
 /prepared
+!/prepared/folds.csv
 output/frame_cache/
 output/cohort_mean_frame.npy
 output/viewer3d/

@@ -92,6 +92,9 @@ def parse_args():
                         "for harmonized crops)")
     p.add_argument("--overwrite", action="store_true",
                    help="allow reusing a run directory that already contains results")
+    p.add_argument("--pretrained-encoder", default=None,
+                   help="path to encoder_best.pt from pretrain_ssl.py; loads weights "
+                        "into the cnn3d encoder before fine-tuning (cnn3d only)")
     return p.parse_args()
 
 
@@ -160,7 +163,18 @@ def build_model(args, view):
     for k, v in extra.items():
         if k in accepted and v is not None:
             kwargs[k] = v
-    return cls(**kwargs)
+    model = cls(**kwargs)
+    if args.pretrained_encoder:
+        enc_path = Path(args.pretrained_encoder)
+        if not hasattr(model, "features"):
+            raise SystemExit("--pretrained-encoder only works with cnn3d (has .features)")
+        state = torch.load(enc_path, map_location="cpu")
+        # strip classifier keys — keep only encoder (features.*)
+        enc_state = {k: v for k, v in state.items() if k.startswith("features.")}
+        missing, unexpected = model.load_state_dict(enc_state, strict=False)
+        print(f"loaded pretrained encoder from {enc_path} "
+              f"({len(enc_state)} tensors, {len(missing)} missing, {len(unexpected)} unexpected)")
+    return model
 
 
 def run_fold(k, folds, crops, view, args, run_dir, frames=None):

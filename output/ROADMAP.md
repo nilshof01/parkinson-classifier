@@ -97,6 +97,15 @@ Dispatch in `training/dataset.py` is mutually exclusive (single random draw per 
     --crops-dir "C:\Users\nilsh\Projects\DaT Parkinson's Challenge\prepared\crops_m4" \
     --run-name cnn3d_m4_post_bil_s0 --workers 0 --epochs 30 --overwrite
   ```
+Result: 
+OOF: {
+  "n": 1353,
+  "oof_auroc": 0.9575724174419117,
+  "oof_log_loss": 0.25683489441871643,
+  "temperature": 0.9554422470512982,
+  "oof_log_loss_calibrated": 0.2565964460372925,
+  "oof_log_loss_calibrated_clipped": 0.26223424077033997
+}
 
 **cnn3d_m4_baseline_s0** — same recipe without posterior augmentation (control for local comparison)
 - STATUS: not yet run
@@ -107,7 +116,14 @@ Dispatch in `training/dataset.py` is mutually exclusive (single random draw per 
     --crops-dir "C:\Users\nilsh\Projects\DaT Parkinson's Challenge\prepared\crops_m4" \
     --run-name cnn3d_m4_baseline_s0 --workers 0 --epochs 30
   ```
-
+OOF: {
+  "n": 1353,
+  "oof_auroc": 0.9642894934085798,
+  "oof_log_loss": 0.23491588234901428,
+  "temperature": 0.9933367747917264,
+  "oof_log_loss_calibrated": 0.23491114377975464,
+  "oof_log_loss_calibrated_clipped": 0.2416343092918396
+}
 **cnn3d_m4_post_uni_s0** — unilateral posterior augmentation (frac=0.15)
 - STATUS: not yet run
 - Command:
