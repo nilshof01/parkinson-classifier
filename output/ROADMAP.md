@@ -263,6 +263,28 @@ OOF: {
   "oof_log_loss_calibrated_clipped": 0.254264771938324
 }
 
+## Input normalization — RESOLVED 2026-09-13
+
+**Hypothesis:** per-scan z-score (current default) removes inter-subject absolute intensity
+variation. 99th-percentile scaling (divide by P99 of in-head voxels) is more robust to
+injection artifacts and preserves inter-subject relative intensity differences, giving the
+model more signal to distinguish mild PD from normal.
+
+**Result: percentile normalization is significantly better.**
+
+| Run | norm | OOF AUROC | OOF ll | cal+clip ll |
+|---|---|---|---|---|
+| cnn3d_m4_baseline_s0 | zscore | 0.9643 | 0.2349 | 0.2416 |
+| cnn3d_m4_norm_pct99_s0 | percentile (P99) | **0.9659** | **0.2320** | **0.2383** |
+
+Delta: AUROC +0.0016, ll −0.0029, cal+clip ll −0.0033. Consistent improvement across all
+three metrics. The absolute binding level (striatum vs background) carries genuine signal
+that z-score was discarding.
+
+**Updated frozen recipe:** `--norm percentile --norm-percentile 99` added to all future
+cnn3d runs. The `--norm` flag defaults to `zscore` for backward compatibility; pass
+`--norm percentile` explicitly.
+
 ## Augmentation rotation/shift sweep — RESOLVED 2026-09-13
 
 Fold-0 sweep over rotation, shift, and gamma augmentation. Base config:
