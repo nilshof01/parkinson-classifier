@@ -56,13 +56,28 @@ class Cnn3d(nn.Module):
                     nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
                 self.aux_lr = nn.Sequential(
                     nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+        elif pool == "axisaware_bins":
+            # global(C) + pp(2C) + ap(2C) + cau(2C) + lr(2C)
+            #   + gradient(C) + pc_diff(C) + asym(C) = 12C
+            # Y split into thirds: posterior-putamen / anterior-putamen / caudate
+            # gradient, pc_diff, asym are derived features pre-computed for the MLP
+            dim = chs[-1] * 12
+            if aux_weight > 0:
+                self.aux_pp  = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_ap  = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_cau = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_lr  = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
         elif pool == "catavgmax":
             dim = chs[-1] * 2
         else:
             dim = chs[-1]
 
-        # axisaware variants always use a bottleneck — direct linear from 5-7C is too wide
-        if head == "mlp" or pool in ("axisaware", "axisaware_split"):
+        # axisaware variants always use a bottleneck — direct linear from 5-12C is too wide
+        if head == "mlp" or pool in ("axisaware", "axisaware_split", "axisaware_bins"):
             self.classifier = nn.Sequential(
                 nn.Flatten(), nn.Dropout(dropout),
                 nn.Linear(dim, bottleneck_dim), nn.SiLU(),
@@ -90,6 +105,7 @@ class Cnn3d(nn.Module):
                 self._aux_pa_logit = None
                 self._aux_lr_logit = None
             self._aux_pa2_logit = None
+            self._aux_pa3_logit = None
         elif self.pool_kind == "axisaware_split":
             # input axes: 2=X(L-R), 3=Y(P-A), 4=Z(I-S)
             global_avg = f.mean(dim=(2, 3, 4))  # (B, C)
@@ -109,6 +125,48 @@ class Cnn3d(nn.Module):
             else:
                 self._aux_pa_logit  = None
                 self._aux_pa2_logit = None
+                self._aux_lr_logit  = None
+            self._aux_pa3_logit = None
+        elif self.pool_kind == "axisaware_bins":
+            # input axes: 2=X(L-R), 3=Y(P-A), 4=Z(I-S)
+            # Y has 6 feature positions (46-vox input / 8x downsample); thirds = 2 each
+            global_avg = f.mean(dim=(2, 3, 4))    # (B, C)
+            pa = f.mean(dim=(2, 4))               # (B, C, Y) — full P-A profile
+            lr = f.mean(dim=(3, 4))               # (B, C, X) — L-R profile
+            Y = pa.shape[2]
+            t1, t2 = Y // 3, 2 * Y // 3
+            pa_pp  = pa[:, :, :t1]                # posterior putamen (depletes first)
+            pa_ap  = pa[:, :, t1:t2]              # anterior putamen
+            pa_cau = pa[:, :, t2:]                # caudate (most preserved)
+            pp_vec  = torch.cat([pa_pp.amax(2),  pa_pp.amin(2)],  dim=1)  # (B, 2C)
+            ap_vec  = torch.cat([pa_ap.amax(2),  pa_ap.amin(2)],  dim=1)  # (B, 2C)
+            cau_vec = torch.cat([pa_cau.amax(2), pa_cau.amin(2)], dim=1)  # (B, 2C)
+            lr_vec  = torch.cat([lr.amax(2),     lr.amin(2)],     dim=1)  # (B, 2C)
+            # derived features — nonlinear combinations pre-computed for the MLP
+            pp_mean  = pa_pp.mean(2)              # (B, C)
+            ap_mean  = pa_ap.mean(2)              # (B, C)
+            cau_mean = pa_cau.mean(2)             # (B, C)
+            # within-putamen gradient: negative = posterior < anterior = PD sign
+            gradient = pp_mean - ap_mean                                    # (B, C)
+            # putamen:caudate differential ratio ∈ (-1, 1)
+            pc_diff  = (pp_mean - cau_mean) / (
+                pp_mean.abs() + cau_mean.abs() + 1e-6)                     # (B, C)
+            # signed L-R asymmetry index ∈ (-1, 1)
+            mid_x = lr.shape[2] // 2
+            asym = (lr[:, :, :mid_x].mean(2) - lr[:, :, mid_x:].mean(2)) / (
+                lr[:, :, :mid_x].mean(2).abs() + lr[:, :, mid_x:].mean(2).abs() + 1e-6)
+            pooled = torch.cat(
+                [global_avg, pp_vec, ap_vec, cau_vec, lr_vec,
+                 gradient, pc_diff, asym], dim=1)                           # (B, 12C)
+            if self.training and self.aux_weight > 0:
+                self._aux_pa_logit  = self.aux_pp(pp_vec).squeeze(-1)
+                self._aux_pa2_logit = self.aux_ap(ap_vec).squeeze(-1)
+                self._aux_pa3_logit = self.aux_cau(cau_vec).squeeze(-1)
+                self._aux_lr_logit  = self.aux_lr(lr_vec).squeeze(-1)
+            else:
+                self._aux_pa_logit  = None
+                self._aux_pa2_logit = None
+                self._aux_pa3_logit = None
                 self._aux_lr_logit  = None
         elif self.pool_kind == "catavgmax":
             avg = f.mean(dim=(2, 3, 4))

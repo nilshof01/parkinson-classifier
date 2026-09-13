@@ -38,12 +38,19 @@ class Cnn3d(nn.Module):
                 self.aux_pa_post = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
                 self.aux_pa_ant  = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
                 self.aux_lr      = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+        elif pool == "axisaware_bins":
+            dim = chs[-1] * 12
+            if aux_weight > 0:
+                self.aux_pp  = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_ap  = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_cau = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_lr  = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
         elif pool == "catavgmax":
             dim = chs[-1] * 2
         else:
             dim = chs[-1]
 
-        if head == "mlp" or pool in ("axisaware", "axisaware_split"):
+        if head == "mlp" or pool in ("axisaware", "axisaware_split", "axisaware_bins"):
             self.classifier = nn.Sequential(
                 nn.Flatten(), nn.Dropout(dropout),
                 nn.Linear(dim, bottleneck_dim), nn.SiLU(),
@@ -72,6 +79,31 @@ class Cnn3d(nn.Module):
             pa_ant_vec  = torch.cat([pa_ant.amax(2),  pa_ant.amin(2)],  dim=1)
             lr_vec = torch.cat([lr.amax(2), lr.amin(2)], dim=1)
             pooled = torch.cat([global_avg, pa_post_vec, pa_ant_vec, lr_vec], dim=1)
+        elif self.pool_kind == "axisaware_bins":
+            global_avg = f.mean(dim=(2, 3, 4))
+            pa = f.mean(dim=(2, 4))
+            lr = f.mean(dim=(3, 4))
+            Y = pa.shape[2]
+            t1, t2 = Y // 3, 2 * Y // 3
+            pa_pp  = pa[:, :, :t1]
+            pa_ap  = pa[:, :, t1:t2]
+            pa_cau = pa[:, :, t2:]
+            pp_vec  = torch.cat([pa_pp.amax(2),  pa_pp.amin(2)],  dim=1)
+            ap_vec  = torch.cat([pa_ap.amax(2),  pa_ap.amin(2)],  dim=1)
+            cau_vec = torch.cat([pa_cau.amax(2), pa_cau.amin(2)], dim=1)
+            lr_vec  = torch.cat([lr.amax(2),     lr.amin(2)],     dim=1)
+            pp_mean  = pa_pp.mean(2)
+            ap_mean  = pa_ap.mean(2)
+            cau_mean = pa_cau.mean(2)
+            gradient = pp_mean - ap_mean
+            pc_diff  = (pp_mean - cau_mean) / (
+                pp_mean.abs() + cau_mean.abs() + 1e-6)
+            mid_x = lr.shape[2] // 2
+            asym = (lr[:, :, :mid_x].mean(2) - lr[:, :, mid_x:].mean(2)) / (
+                lr[:, :, :mid_x].mean(2).abs() + lr[:, :, mid_x:].mean(2).abs() + 1e-6)
+            pooled = torch.cat(
+                [global_avg, pp_vec, ap_vec, cau_vec, lr_vec,
+                 gradient, pc_diff, asym], dim=1)
         elif self.pool_kind == "catavgmax":
             avg = f.mean(dim=(2, 3, 4))
             pooled = torch.cat([avg, f.amax(dim=(2, 3, 4))], dim=1)
