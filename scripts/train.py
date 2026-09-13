@@ -102,6 +102,9 @@ def parse_args():
                         "for harmonized crops)")
     p.add_argument("--overwrite", action="store_true",
                    help="allow reusing a run directory that already contains results")
+    p.add_argument("--exclude-csv", default=None,
+                   help="CSV with a 'uid' column; those scans are dropped from all folds "
+                        "before training (e.g. prepared/exclude_mislabels.csv)")
     p.add_argument("--pretrained-encoder", default=None,
                    help="path to encoder_best.pt from pretrain_ssl.py; loads weights "
                         "into the cnn3d encoder before fine-tuning (cnn3d only)")
@@ -350,6 +353,12 @@ def main():
             f"the default folds file is {CFG.folds_csv}."
         )
     folds = pd.read_csv(folds_path)
+    if args.exclude_csv:
+        exclude_uids = set(pd.read_csv(args.exclude_csv)["uid"])
+        n_before = len(folds)
+        folds = folds[~folds["uid"].isin(exclude_uids)].reset_index(drop=True)
+        print(f"--exclude-csv: removed {n_before - len(folds)} scans, "
+              f"{len(folds)} remain")
     if args.crops_dir and not Path(args.crops_dir).is_dir():
         raise SystemExit(f"--crops-dir {args.crops_dir} does not exist — "
                          "run scripts/prepare_dataset.py (with --harmonize-to) first.")

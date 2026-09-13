@@ -2,6 +2,8 @@
 /data
 /prepared
 !/prepared/folds.csv
+!/prepared/folds*.csv
+!/prepared/exclude_mislabels.csv
 output/frame_cache/
 output/cohort_mean_frame.npy
 output/viewer3d/

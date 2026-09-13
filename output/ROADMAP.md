@@ -354,6 +354,78 @@ python scripts/train.py --model efficientnet_b0 --view mipapgrad \
   Linux 1353-scan split — OOF numbers are not directly comparable to Linux models but
   are internally consistent for comparing augmented vs. baseline runs
 
+## Mislabel / DIP analysis — 2026-09-13
+
+OOF predictions from `ax_split_aux03` (axisaware_split, aux_weight=0.3) were cross-referenced
+with SBR features to identify the 40 highest-loss samples. Two clinically distinct groups
+emerged.
+
+### Hard negatives — labeled healthy, model strongly predicts PD
+
+| uid | pred | SBR_put_min | interpretation |
+|---|---|---|---|
+| f5gzpl1q | 0.748 | **0.48** | SBR of 0.48 — pathologically low, almost certainly PD mislabeled as healthy |
+| bbxux1ox | 0.882 | **0.63** | Same |
+| bmae38sr | 0.806 | **0.77** | Same |
+| 9tze5r5u | 0.988 | 1.07 | Low SBR + model very confident |
+| gom6736z | 0.979 | 1.34 | L/R = 2.20/1.34 — 64% asymmetry, classic unilateral PD pattern |
+| y08p0fod | 0.926 | 1.16 | L/R asymmetry 78% |
+
+Most hard negatives have SBR < 1.5 despite a healthy label. In clinical DaT-SPECT, SBR < 1.5
+strongly suggests dopaminergic deficit. These are the most likely mislabels in the dataset.
+
+### Hard positives — labeled PD, model strongly predicts healthy
+
+| uid | pred | SBR_put_min | interpretation |
+|---|---|---|---|
+| 7ujodck8 | 0.039 | **4.41** | SBR of 4.41 — completely normal binding. Almost certainly DIP |
+| vzme9wt0 | 0.056 | 3.20 | Normal binding, DIP suspect |
+| y595cpjz | 0.091 | 3.15 | Normal binding |
+| dg1wjuii | 0.083 | 3.22 | Normal binding |
+| 344mw04i | 0.076 | 3.30 | Normal binding |
+| q10f7ia4 | 0.078 | **0.37** | GENUINE HARD PD — very low SBR, model misses it |
+| rsezytkw | 0.097 | 0.86 | Genuine hard PD — low SBR |
+
+Most hard positives with SBR > 2.0 are likely DIP (drug-induced parkinsonism): clinical
+parkinsonism with structurally normal dopamine transporters. These should never have been
+labeled as pathologic DaT-SPECT. The cases with low SBR (q10f7ia4, rsezytkw, dhvs41lq)
+are genuine PD the model currently misses.
+
+### What sbr_weight does
+
+`--sbr-weight` assigns each positive (PD) training sample a weight of `1 / sbr_putamen_min`,
+then normalises so the mean weight stays 1. Effect:
+
+- DIP suspects (SBR > 3): weight ~0.1–0.3 → nearly ignored during training
+- Mild PD (SBR 1.5–2.5): weight ~0.4–0.7 → moderate attention
+- Clear PD (SBR 0.5–1.0): weight ~1.5–2.5 → strong focus
+- All healthy controls: weight = 1.0 (unchanged)
+
+This means DIP-like mislabeled cases contribute almost nothing to the gradient, while the
+model focuses on learning the genuine hard positive cases (low SBR PD it currently misses).
+Negative samples are unaffected — the hard negatives need a different intervention
+(exclusion or relabeling).
+
+### Files created
+
+- `prepared/exclude_mislabels.csv` — all 40 suspicious UIDs with label, pred, SBR, reason
+- `scripts/visualize_samples.py` — generates 3-panel MIP PNGs for inspection
+- `--exclude-csv` flag added to `scripts/train.py`
+
+### Recommended experiments
+
+1. `--exclude-csv prepared/exclude_mislabels.csv` — train without suspicious cases, compare OOF
+2. `--sbr-weight` — downweight DIP suspects without removing them
+3. Both combined — cleanest dataset + weighted loss
+4. Visually inspect `output/mislabel_review/` PNGs before deciding on exclusions
+
+### Caution
+
+Removing all 40 cases improves *reported* OOF (those hard cases no longer contribute to the
+metric), but does not guarantee the model improves on the test set if some flagged cases
+appear there. The hard cases with low SBR (q10f7ia4, rsezytkw, dhvs41lq, f5gzpl1q, bbxux1ox,
+bmae38sr) are the ones most worth reviewing clinically before removal.
+
 ## Open questions
 
 1. Does the OOF→public-leaderboard offset confirm our standing (step 1)?
