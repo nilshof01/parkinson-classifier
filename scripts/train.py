@@ -111,6 +111,17 @@ def parse_args():
     p.add_argument("--sbr-weight", action="store_true",
                    help="up-weight mild positive samples by 1/sbr_putamen_min so the "
                         "model pays more attention to hard borderline cases")
+    p.add_argument("--sbr-conf-weight", action="store_true",
+                   help="bidirectional SBR confidence weight: down-weight negatives with "
+                        "low SBR (suspicious mislabels) AND positives with high SBR "
+                        "(likely DIP) using a continuous weight from output/features.csv. "
+                        "Thresholds: neg SBR<1.5 → w=sbr/1.5; pos SBR>2.5 → "
+                        "w=1-(sbr-2.5)/2.0; both clamped to [0.05,1]. "
+                        "Keeps all samples in training — no exclusion.")
+    p.add_argument("--sbr-conf-neg-thresh", type=float, default=1.5,
+                   help="SBR threshold below which negatives get reduced weight (default 1.5)")
+    p.add_argument("--sbr-conf-pos-thresh", type=float, default=2.5,
+                   help="SBR threshold above which positives get reduced weight (default 2.5)")
     p.add_argument("--aug-rot-deg", type=float, default=15.0,
                    help="max rotation angle (degrees) for geom augmentation (default 15)") ## sweep confirmed this choice
     p.add_argument("--aug-shift-vox", type=float, default=5.0,
@@ -275,19 +286,39 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
         from training.augment_asymmetry import AsymmetryJitter
         asym_jitter = AsymmetryJitter(max_ai=args.asym_jitter_max_ai)
     sample_weights = None
-    if getattr(args, "sbr_weight", False) and frames is None:
+    if (getattr(args, "sbr_weight", False) or getattr(args, "sbr_conf_weight", False)) \
+            and frames is None:
         feats_path = CFG.repo_dir / "output" / "features.csv"
         if feats_path.exists():
             sbr = pd.read_csv(feats_path).set_index("uid")["sbr_putamen_min"]
             sample_weights = {}
-            for uid, label in records(tr):
-                if label == 1.0 and uid in sbr.index:
-                    sample_weights[uid] = float(1.0 / max(sbr[uid], 0.1))
-                else:
-                    sample_weights[uid] = 1.0
+            if getattr(args, "sbr_conf_weight", False):
+                # Bidirectional: down-weight suspicious negatives (low SBR) and
+                # DIP-suspect positives (high SBR) based on label-SBR consistency.
+                neg_thresh = getattr(args, "sbr_conf_neg_thresh", 1.5)
+                pos_thresh = getattr(args, "sbr_conf_pos_thresh", 2.5)
+                for uid, label in records(tr):
+                    s = float(sbr.get(uid, neg_thresh if label == 0.0 else pos_thresh))
+                    if label == 0.0:
+                        # label=healthy but low SBR → suspicious → reduce weight
+                        w = float(np.clip(s / neg_thresh, 0.05, 1.0))
+                    else:
+                        # label=PD but high SBR → likely DIP → reduce weight
+                        w = float(np.clip(1.0 - max(0.0, s - pos_thresh) / 2.0, 0.05, 1.0))
+                    sample_weights[uid] = w
+            else:
+                # Original sbr_weight: up-weight hard positives only (1/sbr)
+                for uid, label in records(tr):
+                    if label == 1.0 and uid in sbr.index:
+                        sample_weights[uid] = float(1.0 / max(sbr[uid], 0.1))
+                    else:
+                        sample_weights[uid] = 1.0
             # normalise so mean weight stays ~1
             mean_w = np.mean(list(sample_weights.values()))
             sample_weights = {u: w / mean_w for u, w in sample_weights.items()}
+            n_down = sum(1 for w in sample_weights.values() if w < (0.9 / mean_w))
+            print(f"  sample_weights: {n_down}/{len(sample_weights)} samples "
+                  f"down-weighted (mean_w={mean_w:.3f})")
     train_ds = DatScanDataset(crops, records(tr), view, augment=aug,
                               chimera=chimera, chimera_frac=args.chimera_frac,
                               frames=frames, frame_augment=frame_aug,
