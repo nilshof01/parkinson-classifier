@@ -50,11 +50,10 @@ def main():
     check('"axisaware"'       in cfg_src, 'MODEL_POOL contains "axisaware"')
     check("CALIBRATION"       in cfg_src, "CALIBRATION defined")
     check('"isotonic"'        in cfg_src, 'CALIBRATION = "isotonic"')
-    check("CHECKPOINTS = None" in cfg_src, "CHECKPOINTS = None (single architecture)")
     check("ThreadPoolExecutor" in z.read("main.py").decode(),
           "main.py has parallel preprocessing (ThreadPoolExecutor)")
 
-    # ── architecture vs checkpoint ─────────────────────────────────────────────
+    # ── architecture vs checkpoint — mirrors load_models exactly ──────────────
     with tempfile.TemporaryDirectory() as tmp:
         z.extractall(tmp)
 
@@ -66,21 +65,28 @@ def main():
         mod = importlib.util.module_from_spec(spec2)
         spec2.loader.exec_module(mod)
 
-        model = mod.Cnn3d(
-            pool=cfg.MODEL_POOL,
-            width_mult=cfg.MODEL_WIDTH_MULT,
-            dropout=cfg.MODEL_DROPOUT,
-            aux_weight=getattr(cfg, "MODEL_AUX_WEIGHT", 0.0),
-        )
-        model_keys = set(model.state_dict().keys())
+        checkpoint_cfgs = getattr(cfg, "CHECKPOINTS", None)
+        if checkpoint_cfgs:
+            entries = [(Path(tmp) / c["path"], c) for c in checkpoint_cfgs]
+            check(True, f"CHECKPOINTS list with {len(entries)} entries")
+        else:
+            entries = [(p, {}) for p in sorted(Path(tmp).glob("models/*.pt"))]
+            check(True, f"CHECKPOINTS=None, loading {len(entries)} .pt files with MODEL_POOL={cfg.MODEL_POOL}")
 
-        for pt in sorted(Path(tmp).glob("models/*.pt")):
-            ckpt_keys = set(torch.load(pt, map_location="cpu",
-                                       weights_only=True).keys())
+        for ckpt, overrides in entries:
+            pool       = overrides.get("pool",       cfg.MODEL_POOL or "avg")
+            width_mult = overrides.get("width_mult", cfg.MODEL_WIDTH_MULT)
+            dropout    = overrides.get("dropout",    cfg.MODEL_DROPOUT)
+            aux_weight = overrides.get("aux_weight", getattr(cfg, "MODEL_AUX_WEIGHT", 0.0))
+            model      = mod.Cnn3d(pool=pool, width_mult=width_mult,
+                                   dropout=dropout, aux_weight=aux_weight)
+            model_keys = set(model.state_dict().keys())
+            ckpt_keys  = set(torch.load(ckpt, map_location="cpu",
+                                        weights_only=True).keys())
             missing    = model_keys - ckpt_keys
             unexpected = ckpt_keys  - model_keys
-            check(not missing,    f"{pt.name}: no missing keys")
-            check(not unexpected, f"{pt.name}: no unexpected keys")
+            check(not missing,    f"{ckpt.name} (pool={pool}): no missing keys")
+            check(not unexpected, f"{ckpt.name} (pool={pool}): no unexpected keys")
 
         cal = np.load(f"{tmp}/assets/calibrator.npz")
         check("x" in cal and "y" in cal, "calibrator.npz has x and y arrays")
