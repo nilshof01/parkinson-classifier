@@ -132,6 +132,14 @@ def parse_args():
     p.add_argument("--hard-chimera", action="store_true",
                    help="online hard mining: after every 5 epochs re-score normal training "
                         "samples and focus chimera mixing on the ones the model most confuses")
+    p.add_argument("--gmm-weight", action="store_true",
+                   help="DivideMix-style per-epoch GMM weighting: after each epoch the EMA "
+                        "model scores every training sample; a 2-component GMM separates "
+                        "clean (low-loss) from noisy (high-loss); each sample's weight "
+                        "becomes p(clean|loss), so persistent high-loss samples shrink "
+                        "towards 0 without being excluded.")
+    p.add_argument("--gmm-update-every", type=int, default=1,
+                   help="re-fit GMM every N epochs (default 1; use 5 to save time)")
     return p.parse_args()
 
 
@@ -319,7 +327,8 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
             n_down = sum(1 for w in sample_weights.values() if w < (0.9 / mean_w))
             print(f"  sample_weights: {n_down}/{len(sample_weights)} samples "
                   f"down-weighted (mean_w={mean_w:.3f})")
-    train_ds = DatScanDataset(crops, records(tr), view, augment=aug,
+    tr_records = records(tr)
+    train_ds = DatScanDataset(crops, tr_records, view, augment=aug,
                               chimera=chimera, chimera_frac=args.chimera_frac,
                               frames=frames, frame_augment=frame_aug,
                               pos_chimera=pos_chimera, pos_frac=args.chimera_pos_frac,
@@ -341,6 +350,15 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
             DatScanDataset(crops, records(va), view, force_flip=True, frames=frames),
             **loader_kw
         )
+    # Ordered, no-augmentation loader over training samples for GMM scoring
+    eval_train_loader = None
+    if getattr(args, "gmm_weight", False) and frames is None:
+        eval_train_ds = DatScanDataset(crops, tr_records, view)
+        eval_train_loader = DataLoader(
+            eval_train_ds, batch_size=args.batch_size,
+            shuffle=False, num_workers=args.workers,
+            pin_memory=True, worker_init_fn=worker_init,
+        )
 
     model = build_model(args, view)
     trainer = Trainer(model, args.device, epochs=args.epochs, lr=args.lr,
@@ -354,7 +372,10 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
             normal_uids, crops, view, train_ds, args.chimera_frac, args.device)
     print(f"fold {k}: train {len(tr)}, val {len(va)}")
     best, history = trainer.fit(train_loader, val_loader, tta_loader=flip_loader,
-                                epoch_callback=epoch_cb)
+                                epoch_callback=epoch_cb,
+                                eval_train_loader=eval_train_loader,
+                                gmm_weight=getattr(args, "gmm_weight", False),
+                                gmm_update_every=getattr(args, "gmm_update_every", 1))
 
     fold_dir = run_dir / f"fold{k}"
     fold_dir.mkdir(parents=True, exist_ok=True)
