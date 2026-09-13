@@ -25,7 +25,7 @@ class Trainer:
         self.label_smoothing = label_smoothing
         self.log = log_fn
 
-    def fit(self, train_loader, val_loader, epoch_callback=None):
+    def fit(self, train_loader, val_loader, tta_loader=None, epoch_callback=None):
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr,
                                 weight_decay=self.weight_decay)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -84,11 +84,16 @@ class Trainer:
 
             ema.copy_to(self.model)
             val_probs, val_y = self.predict(val_loader)
+            if tta_loader is not None:
+                val_probs_f, _ = self.predict(tta_loader)
+                eval_probs = (val_probs + val_probs_f) / 2
+            else:
+                eval_probs = val_probs
             row = {
                 "epoch": epoch,
                 "train_loss": float(np.mean(losses)),
-                "val_log_loss": float(log_loss(val_y, np.clip(val_probs, 1e-6, 1 - 1e-6))),
-                "val_auroc": float(roc_auc_score(val_y, val_probs)),
+                "val_log_loss": float(log_loss(val_y, np.clip(eval_probs, 1e-6, 1 - 1e-6))),
+                "val_auroc": float(roc_auc_score(val_y, eval_probs)),
                 "lr": sched.get_last_lr()[0],
             }
             if row["val_log_loss"] < best["log_loss"]:

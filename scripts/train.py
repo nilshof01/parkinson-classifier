@@ -301,6 +301,12 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
     train_loader = DataLoader(train_ds, shuffle=True, drop_last=True, **loader_kw)
     val_loader = DataLoader(DatScanDataset(crops, records(va), view, frames=frames),
                             **loader_kw)
+    flip_loader = None
+    if not args.no_tta:
+        flip_loader = DataLoader(
+            DatScanDataset(crops, records(va), view, force_flip=True, frames=frames),
+            **loader_kw
+        )
 
     model = build_model(args, view)
     trainer = Trainer(model, args.device, epochs=args.epochs, lr=args.lr,
@@ -313,7 +319,8 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
         epoch_cb = _make_hard_chimera_cb(
             normal_uids, crops, view, train_ds, args.chimera_frac, args.device)
     print(f"fold {k}: train {len(tr)}, val {len(va)}")
-    best, history = trainer.fit(train_loader, val_loader, epoch_callback=epoch_cb)
+    best, history = trainer.fit(train_loader, val_loader, tta_loader=flip_loader,
+                                epoch_callback=epoch_cb)
 
     fold_dir = run_dir / f"fold{k}"
     fold_dir.mkdir(parents=True, exist_ok=True)
@@ -322,11 +329,7 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
 
     model.load_state_dict(best["state"])
     probs, y = trainer.predict(val_loader)
-    if not args.no_tta:
-        flip_loader = DataLoader(
-            DatScanDataset(crops, records(va), view, force_flip=True, frames=frames),
-            **loader_kw
-        )
+    if flip_loader is not None:
         probs_f, _ = trainer.predict(flip_loader)
         probs = (probs + probs_f) / 2
     preds = pd.DataFrame({"uid": va["uid"].values, "is_pathologic": y, "pred": probs})
