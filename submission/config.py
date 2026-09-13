@@ -15,16 +15,19 @@
 #
 # Leave CHECKPOINTS = None to load all *.pt files in models/ with the same config.
 CHECKPOINTS = [
-    {"path": "models/final_fold0.pt",    "pool": "axisaware",       "aux_weight": 0.1},
-    {"path": "models/final_fold1.pt",    "pool": "axisaware",       "aux_weight": 0.1},
-    {"path": "models/final_fold2.pt",    "pool": "axisaware",       "aux_weight": 0.1},
-    {"path": "models/final_fold3.pt",    "pool": "axisaware",       "aux_weight": 0.1},
-    {"path": "models/final_fold4.pt",    "pool": "axisaware",       "aux_weight": 0.1},
-    {"path": "models/axaware_fold0.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
-    {"path": "models/axaware_fold1.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
-    {"path": "models/axaware_fold2.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
-    {"path": "models/axaware_fold3.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
-    {"path": "models/axaware_fold4.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
+    # confirmed from state dict keys:
+    #   axaware_fold*.pt  → aux_pa keys        → pool="axisaware"       dim=1280
+    #   diff_fold*.pt     → aux_pa_post/ant keys → pool="axisaware_split" dim=1792
+    {"path": "models/axaware_fold0.pt", "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/axaware_fold1.pt", "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/axaware_fold2.pt", "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/axaware_fold3.pt", "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/axaware_fold4.pt", "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/diff_fold0.pt",    "pool": "axisaware_split", "aux_weight": 0.1},
+    {"path": "models/diff_fold1.pt",    "pool": "axisaware_split", "aux_weight": 0.1},
+    {"path": "models/diff_fold2.pt",    "pool": "axisaware_split", "aux_weight": 0.1},
+    {"path": "models/diff_fold3.pt",    "pool": "axisaware_split", "aux_weight": 0.1},
+    {"path": "models/diff_fold4.pt",    "pool": "axisaware_split", "aux_weight": 0.1},
 ]
 
 # Defaults used when CHECKPOINTS = None or a checkpoint omits a key.
