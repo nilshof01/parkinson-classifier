@@ -25,7 +25,8 @@ class Cnn3d(nn.Module):
     name = "cnn3d"
 
     def __init__(self, pretrained=True, pool="avg", head="linear",
-                 in_chans=1, width_mult=1.0, dropout=0.3, aux_weight=0.0):
+                 in_chans=1, width_mult=1.0, dropout=0.3, aux_weight=0.0,
+                 bottleneck_dim=256):
         super().__init__()
         pool = pool or "avg"
         chs = [max(8, int(round(c * width_mult))) for c in (32, 64, 128, 256)]
@@ -52,8 +53,9 @@ class Cnn3d(nn.Module):
         # axisaware always uses a bottleneck — direct linear from 5C is too wide
         if head == "mlp" or pool == "axisaware":
             self.classifier = nn.Sequential(
-                nn.Flatten(), nn.Dropout(dropout), nn.Linear(dim, 256), nn.SiLU(),
-                nn.Dropout(dropout), nn.Linear(256, 1))
+                nn.Flatten(), nn.Dropout(dropout),
+                nn.Linear(dim, bottleneck_dim), nn.SiLU(),
+                nn.Dropout(dropout), nn.Linear(bottleneck_dim, 1))
         else:
             # leading Flatten is a no-op on the pooled tensor; keeps state-dict
             # keys identical to earlier cnn3d checkpoints (classifier.2.*)
