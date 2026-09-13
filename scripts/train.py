@@ -73,7 +73,7 @@ def parse_args():
                    help="weight for axisaware auxiliary heads (0=disabled, try 0.3)")
     p.add_argument("--bottleneck-dim", type=int, default=256,
                    help="hidden dim of the MLP bottleneck head for axisaware pool (default 256)")
-    p.add_argument("--pool", default=None, choices=["avg", "max", "catavgmax", "axisaware"],
+    p.add_argument("--pool", default=None, choices=["avg", "max", "catavgmax", "axisaware", "axisaware_split"],
                    help="global pooling of CNN backbones (default: model's own, avg); "
                         "catavgmax = concatenated avg+max")
     p.add_argument("--head", default="linear", choices=["linear", "mlp"],

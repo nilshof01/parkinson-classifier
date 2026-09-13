@@ -16,7 +16,7 @@ def _block(cin, cout, stride):
 
 class Cnn3d(nn.Module):
     def __init__(self, pool="avg", head="linear", in_chans=1,
-                 width_mult=1.0, dropout=0.0, aux_weight=0.0):
+                 width_mult=1.0, dropout=0.0, aux_weight=0.0, bottleneck_dim=256):
         super().__init__()
         pool = pool or "avg"
         chs = [max(8, int(round(c * width_mult))) for c in (32, 64, 128, 256)]
@@ -32,15 +32,22 @@ class Cnn3d(nn.Module):
             if aux_weight > 0:
                 self.aux_pa = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
                 self.aux_lr = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+        elif pool == "axisaware_split":
+            dim = chs[-1] * 7
+            if aux_weight > 0:
+                self.aux_pa_post = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_pa_ant  = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_lr      = nn.Sequential(nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
         elif pool == "catavgmax":
             dim = chs[-1] * 2
         else:
             dim = chs[-1]
 
-        if head == "mlp" or pool == "axisaware":
+        if head == "mlp" or pool in ("axisaware", "axisaware_split"):
             self.classifier = nn.Sequential(
-                nn.Flatten(), nn.Dropout(dropout), nn.Linear(dim, 256), nn.SiLU(),
-                nn.Dropout(dropout), nn.Linear(256, 1))
+                nn.Flatten(), nn.Dropout(dropout),
+                nn.Linear(dim, bottleneck_dim), nn.SiLU(),
+                nn.Dropout(dropout), nn.Linear(bottleneck_dim, 1))
         else:
             self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(dropout),
                                             nn.Linear(dim, 1))
@@ -54,6 +61,17 @@ class Cnn3d(nn.Module):
             pa_vec = torch.cat([pa.amax(dim=2), pa.amin(dim=2)], dim=1)
             lr_vec = torch.cat([lr.amax(dim=2), lr.amin(dim=2)], dim=1)
             pooled = torch.cat([global_avg, pa_vec, lr_vec], dim=1)
+        elif self.pool_kind == "axisaware_split":
+            global_avg = f.mean(dim=(2, 3, 4))
+            pa = f.mean(dim=(2, 4))
+            lr = f.mean(dim=(3, 4))
+            mid = pa.shape[2] // 2
+            pa_post = pa[:, :, :mid]
+            pa_ant  = pa[:, :, mid:]
+            pa_post_vec = torch.cat([pa_post.amax(2), pa_post.amin(2)], dim=1)
+            pa_ant_vec  = torch.cat([pa_ant.amax(2),  pa_ant.amin(2)],  dim=1)
+            lr_vec = torch.cat([lr.amax(2), lr.amin(2)], dim=1)
+            pooled = torch.cat([global_avg, pa_post_vec, pa_ant_vec, lr_vec], dim=1)
         elif self.pool_kind == "catavgmax":
             avg = f.mean(dim=(2, 3, 4))
             pooled = torch.cat([avg, f.amax(dim=(2, 3, 4))], dim=1)

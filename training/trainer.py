@@ -63,12 +63,15 @@ class Trainer:
                 with torch.autocast("cuda", enabled=use_amp):
                     logits = self.model(x)
                     loss = criterion(logits, y, w)
-                    aux_pa = getattr(self.model, "_aux_pa_logit", None)
-                    aux_lr = getattr(self.model, "_aux_lr_logit", None)
+                    aux_pa  = getattr(self.model, "_aux_pa_logit",  None)
+                    aux_pa2 = getattr(self.model, "_aux_pa2_logit", None)
+                    aux_lr  = getattr(self.model, "_aux_lr_logit",  None)
                     if aux_pa is not None:
                         aw = self.model.aux_weight
                         loss = loss + aw * criterion(aux_pa, y) \
                                     + aw * criterion(aux_lr, y)
+                        if aux_pa2 is not None:
+                            loss = loss + aw * criterion(aux_pa2, y)
                 scaler.scale(loss).backward()
                 scaler.step(opt)
                 scaler.update()

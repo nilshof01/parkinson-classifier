@@ -45,13 +45,24 @@ class Cnn3d(nn.Module):
                     nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
                 self.aux_lr = nn.Sequential(
                     nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+        elif pool == "axisaware_split":
+            # global(1C) + pa_post(2C) + pa_ant(2C) + lr(2C) = 7C
+            # pa split at midpoint: posterior=putamen region, anterior=caudate region
+            dim = chs[-1] * 7
+            if aux_weight > 0:
+                self.aux_pa_post = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_pa_ant = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_lr = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
         elif pool == "catavgmax":
             dim = chs[-1] * 2
         else:
             dim = chs[-1]
 
-        # axisaware always uses a bottleneck — direct linear from 5C is too wide
-        if head == "mlp" or pool == "axisaware":
+        # axisaware variants always use a bottleneck — direct linear from 5-7C is too wide
+        if head == "mlp" or pool in ("axisaware", "axisaware_split"):
             self.classifier = nn.Sequential(
                 nn.Flatten(), nn.Dropout(dropout),
                 nn.Linear(dim, bottleneck_dim), nn.SiLU(),
@@ -78,6 +89,27 @@ class Cnn3d(nn.Module):
             else:
                 self._aux_pa_logit = None
                 self._aux_lr_logit = None
+            self._aux_pa2_logit = None
+        elif self.pool_kind == "axisaware_split":
+            # input axes: 2=X(L-R), 3=Y(P-A), 4=Z(I-S)
+            global_avg = f.mean(dim=(2, 3, 4))  # (B, C)
+            pa = f.mean(dim=(2, 4))             # (B, C, Y) — full P-A profile
+            lr = f.mean(dim=(3, 4))             # (B, C, X) — L-R profile
+            mid = pa.shape[2] // 2
+            pa_post = pa[:, :, :mid]            # posterior half — putamen depletes first
+            pa_ant  = pa[:, :, mid:]            # anterior half — caudate more preserved
+            pa_post_vec = torch.cat([pa_post.amax(2), pa_post.amin(2)], dim=1)  # (B, 2C)
+            pa_ant_vec  = torch.cat([pa_ant.amax(2),  pa_ant.amin(2)],  dim=1)  # (B, 2C)
+            lr_vec = torch.cat([lr.amax(2), lr.amin(2)], dim=1)                 # (B, 2C)
+            pooled = torch.cat([global_avg, pa_post_vec, pa_ant_vec, lr_vec], dim=1)  # (B, 7C)
+            if self.training and self.aux_weight > 0:
+                self._aux_pa_logit  = self.aux_pa_post(pa_post_vec).squeeze(-1)
+                self._aux_pa2_logit = self.aux_pa_ant(pa_ant_vec).squeeze(-1)
+                self._aux_lr_logit  = self.aux_lr(lr_vec).squeeze(-1)
+            else:
+                self._aux_pa_logit  = None
+                self._aux_pa2_logit = None
+                self._aux_lr_logit  = None
         elif self.pool_kind == "catavgmax":
             avg = f.mean(dim=(2, 3, 4))
             pooled = torch.cat([avg, f.amax(dim=(2, 3, 4))], dim=1)
