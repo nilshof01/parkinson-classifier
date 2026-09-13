@@ -113,6 +113,7 @@ def main():
     args = ap.parse_args()
 
     df = load_df(args.run)
+    run_name = Path(args.run).name
     out = ACFG.output_dir / "error_analysis"
     out.mkdir(exist_ok=True)
 
@@ -131,7 +132,7 @@ def main():
     tn = df[(df["pred_label"] == 0) & (df["is_pathologic"] == 0)]
 
     print(f"\n{'='*55}")
-    print(f"  {args.run}  (n={total})")
+    print(f"  {run_name}  (n={total})")
     print(f"{'='*55}")
     print(f"  TP {len(tp):4d}  FP {len(fp):4d}")
     print(f"  FN {len(fn):4d}  TN {len(tn):4d}")
@@ -181,9 +182,9 @@ def main():
     ax.set_title("Prediction distribution: correct vs wrong")
     ax.legend()
 
-    fig.suptitle(args.run)
+    fig.suptitle(run_name)
     fig.tight_layout()
-    scatter_path = out / f"pred_analysis_{args.run}.png"
+    scatter_path = out / f"pred_analysis_{run_name}.png"
     fig.savefig(scatter_path, dpi=140)
     plt.close(fig)
     print(f"  scatter: {scatter_path.name}")
