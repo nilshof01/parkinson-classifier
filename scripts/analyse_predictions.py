@@ -46,28 +46,51 @@ def load_df(run_name):
     return df
 
 
-def gallery(df, crops_dir, title, path, n=24, sort_col=None, ascending=True):
+def _mip_strip(crop):
+    """Return (3, H, W) composite: axial / coronal / sagittal MIPs side by side."""
+    axial   = np.rot90(crop.max(axis=2))   # looking down
+    coronal = np.rot90(crop.max(axis=1))   # looking from front
+    sagittal= np.rot90(crop.max(axis=0))   # looking from side
+    # normalise each to [0,1] independently so brightness is comparable
+    def _norm(m):
+        lo, hi = m.min(), m.max()
+        return (m - lo) / (hi - lo + 1e-9)
+    # pad to same height then concatenate horizontally
+    mips = [_norm(m) for m in (axial, coronal, sagittal)]
+    h = max(m.shape[0] for m in mips)
+    padded = [np.pad(m, ((0, h - m.shape[0]), (0, 0))) for m in mips]
+    return np.concatenate(padded, axis=1)
+
+
+def gallery(df, crops_dir, title, path, n=24, sort_col=None, ascending=True,
+            triaxial=False):
     if df.empty:
         print(f"  skipping {path.name} — no matching scans")
         return
     if sort_col:
         df = df.sort_values(sort_col, ascending=ascending)
     df = df.head(n)
-    cols = 6
+    cols = 4 if triaxial else 6
     rows = int(np.ceil(len(df) / cols))
-    fig, axes = plt.subplots(rows, cols, figsize=(3.2 * cols, 3.8 * rows))
+    w_per = 9.0 if triaxial else 3.2
+    fig, axes = plt.subplots(rows, cols, figsize=(w_per * cols, 3.8 * rows))
     for ax, (_, r) in zip(np.ravel(axes), df.iterrows()):
         try:
             crop = np.load(crops_dir / f"{r.uid}.npy").astype(np.float32)
-            ax.imshow(np.rot90(crop.max(axis=2)), cmap="hot")
+            img = _mip_strip(crop) if triaxial else np.rot90(crop.max(axis=2))
+            ax.imshow(img, cmap="hot")
+            if triaxial:
+                ax.axvline(crop.shape[2], color="cyan", lw=0.5)
+                ax.axvline(crop.shape[2] + crop.shape[1], color="cyan", lw=0.5)
         except FileNotFoundError:
             ax.set_facecolor("black")
         label_str = "ABN" if r.is_pathologic else "NRM"
         pred_str = f"{'ABN' if r.pred > 0.5 else 'NRM'} {r.pred:.2f}"
+        view_hint = "  axial | coronal | sagittal" if triaxial else ""
         ax.set_title(
             f"{r.uid}\n{label_str} → {pred_str}\n"
-            f"AI={r.asym_putamen:.3f}  SBR={r.sbr_putamen_min:.2f}",
-            fontsize=7)
+            f"AI={r.asym_putamen:.3f}  SBR={r.sbr_putamen_min:.2f}{view_hint}",
+            fontsize=6 if triaxial else 7)
         ax.axis("off")
     for ax in np.ravel(axes)[len(df):]:
         ax.axis("off")
@@ -81,6 +104,8 @@ def gallery(df, crops_dir, title, path, n=24, sort_col=None, ascending=True):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run", help="run name under output/runs")
+    ap.add_argument("--triaxial", action="store_true",
+                    help="show axial + coronal + sagittal MIPs side by side in each cell")
     args = ap.parse_args()
 
     df = load_df(args.run)
@@ -162,27 +187,24 @@ def main():
     gallery(fp.copy(), crops_dir,
             "False positives — normal scans called abnormal (sorted by asymmetry)",
             out / "gallery_fp_asym.png",
-            sort_col="asym_putamen", ascending=False)
+            sort_col="asym_putamen", ascending=False, triaxial=args.triaxial)
 
-    # FN sorted by asymmetry ascending — missed abnormals with low asymmetry (bilateral)
     gallery(fn.copy(), crops_dir,
             "False negatives — missed abnormals (sorted by asymmetry, most bilateral first)",
             out / "gallery_fn_bilateral.png",
-            sort_col="asym_putamen", ascending=True)
+            sort_col="asym_putamen", ascending=True, triaxial=args.triaxial)
 
-    # borderline correct (uncertain but right)
     uncertain_correct = df[df["correct"] & (df["confidence"] < 0.15)].copy()
     gallery(uncertain_correct, crops_dir,
             "Uncertain but correct (|pred-0.5|<0.15)",
             out / "gallery_uncertain_correct.png",
-            sort_col="confidence", ascending=True)
+            sort_col="confidence", ascending=True, triaxial=args.triaxial)
 
-    # confident wrong
     confident_wrong = df[~df["correct"] & (df["confidence"] > 0.30)].copy()
     gallery(confident_wrong, crops_dir,
             "Confident but wrong (|pred-0.5|>0.30) — the hard core",
             out / "gallery_confident_wrong.png",
-            sort_col="confidence", ascending=False)
+            sort_col="confidence", ascending=False, triaxial=args.triaxial)
 
     print(f"\nall outputs in {out}/")
 
