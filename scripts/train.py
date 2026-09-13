@@ -69,7 +69,7 @@ def parse_args():
                    help="upper bound on the asymmetry index applied by asym-jitter")
     p.add_argument("--label-smoothing", type=float, default=0.0,
                    help="BCE target smoothing, e.g. 0.05 -> targets 0.05/0.95")
-    p.add_argument("--pool", default=None, choices=["avg", "max", "catavgmax"],
+    p.add_argument("--pool", default=None, choices=["avg", "max", "catavgmax", "axisaware"],
                    help="global pooling of CNN backbones (default: model's own, avg); "
                         "catavgmax = concatenated avg+max")
     p.add_argument("--head", default="linear", choices=["linear", "mlp"],

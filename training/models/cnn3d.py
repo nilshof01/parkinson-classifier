@@ -14,7 +14,13 @@ def _block(cin, cout, stride):
 class Cnn3d(nn.Module):
     """Small from-scratch 3D CNN over the volume — sees true slice-to-slice
     morphology that the MIP views project away. No pretraining exists for this,
-    so `pretrained` is ignored. `head` follows the 2D models: 'linear' or 'mlp'."""
+    so `pretrained` is ignored. `head` follows the 2D models: 'linear' or 'mlp'.
+
+    pool='axisaware': instead of global avg, separately averages over (L-R, I-S)
+    to keep the P-A profile and over (P-A, I-S) to keep the L-R profile, then
+    concatenates max and min along each retained axis with global avg → 5C.
+    This makes the representation more robust to small crop misalignments and
+    explicitly encodes the posterior-anterior gradient and L-R asymmetry."""
 
     name = "cnn3d"
 
@@ -28,24 +34,43 @@ class Cnn3d(nn.Module):
             layers.append(_block(cin, cout, 2))
         self.features = nn.Sequential(*layers)
         self.pool_kind = pool
-        dim = chs[-1] * (2 if pool == "catavgmax" else 1)
-        # leading Flatten is a no-op on the pooled 2D tensor; it keeps state-dict
-        # keys identical to earlier cnn3d checkpoints (classifier.2.*)
-        if head == "mlp":
+
+        if pool == "axisaware":
+            # global(1C) + pa_max(1C) + pa_min(1C) + lr_max(1C) + lr_min(1C) = 5C
+            dim = chs[-1] * 5
+        elif pool == "catavgmax":
+            dim = chs[-1] * 2
+        else:
+            dim = chs[-1]
+
+        # axisaware always uses a bottleneck — direct linear from 5C is too wide
+        if head == "mlp" or pool == "axisaware":
             self.classifier = nn.Sequential(
                 nn.Flatten(), nn.Dropout(dropout), nn.Linear(dim, 256), nn.SiLU(),
                 nn.Dropout(dropout), nn.Linear(256, 1))
         else:
+            # leading Flatten is a no-op on the pooled tensor; keeps state-dict
+            # keys identical to earlier cnn3d checkpoints (classifier.2.*)
             self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(dropout),
                                             nn.Linear(dim, 1))
 
     def forward(self, x):
-        f = self.features(x)
-        avg = f.mean(dim=(2, 3, 4))
-        if self.pool_kind == "catavgmax":
+        f = self.features(x)                    # (B, C, X, Y, Z)
+        if self.pool_kind == "axisaware":
+            # input axes: 2=X(L-R), 3=Y(P-A), 4=Z(I-S)
+            global_avg = f.mean(dim=(2, 3, 4))  # (B, C)
+            pa = f.mean(dim=(2, 4))             # (B, C, Y) — P-A profile
+            lr = f.mean(dim=(3, 4))             # (B, C, X) — L-R profile
+            pooled = torch.cat([
+                global_avg,
+                pa.amax(dim=2), pa.amin(dim=2),  # anterior peak, posterior trough
+                lr.amax(dim=2), lr.amin(dim=2),  # dominant side, weak side
+            ], dim=1)                            # (B, 5C)
+        elif self.pool_kind == "catavgmax":
+            avg = f.mean(dim=(2, 3, 4))
             pooled = torch.cat([avg, f.amax(dim=(2, 3, 4))], dim=1)
         elif self.pool_kind == "max":
             pooled = f.amax(dim=(2, 3, 4))
         else:
-            pooled = avg
+            pooled = f.mean(dim=(2, 3, 4))
         return self.classifier(pooled).squeeze(-1)
