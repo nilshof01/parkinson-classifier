@@ -96,11 +96,12 @@ class Cnn3d(nn.Module):
             ap_mean  = pa_ap.mean(2)
             cau_mean = pa_cau.mean(2)
             gradient = pp_mean - ap_mean
-            pc_diff  = (pp_mean - cau_mean) / (
-                pp_mean.abs() + cau_mean.abs() + 1e-6)
+            pc_diff  = ((pp_mean - cau_mean) / (
+                pp_mean.abs() + cau_mean.abs() + 1e-4)).clamp(-1, 1)
             mid_x = lr.shape[2] // 2
-            asym = (lr[:, :, :mid_x].mean(2) - lr[:, :, mid_x:].mean(2)) / (
-                lr[:, :, :mid_x].mean(2).abs() + lr[:, :, mid_x:].mean(2).abs() + 1e-6)
+            asym = ((lr[:, :, :mid_x].mean(2) - lr[:, :, mid_x:].mean(2)) / (
+                lr[:, :, :mid_x].mean(2).abs() + lr[:, :, mid_x:].mean(2).abs()
+                + 1e-4)).clamp(-1, 1)
             pooled = torch.cat(
                 [global_avg, pp_vec, ap_vec, cau_vec, lr_vec,
                  gradient, pc_diff, asym], dim=1)

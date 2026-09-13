@@ -149,12 +149,15 @@ class Cnn3d(nn.Module):
             # within-putamen gradient: negative = posterior < anterior = PD sign
             gradient = pp_mean - ap_mean                                    # (B, C)
             # putamen:caudate differential ratio ∈ (-1, 1)
-            pc_diff  = (pp_mean - cau_mean) / (
-                pp_mean.abs() + cau_mean.abs() + 1e-6)                     # (B, C)
+            # 1e-4 instead of 1e-6: float16 min-normal ~6.1e-5, smaller epsilon
+            # underflows to 0 giving 0/0=NaN under AMP; clamp ensures ∈(-1,1)
+            pc_diff  = ((pp_mean - cau_mean) / (
+                pp_mean.abs() + cau_mean.abs() + 1e-4)).clamp(-1, 1)       # (B, C)
             # signed L-R asymmetry index ∈ (-1, 1)
             mid_x = lr.shape[2] // 2
-            asym = (lr[:, :, :mid_x].mean(2) - lr[:, :, mid_x:].mean(2)) / (
-                lr[:, :, :mid_x].mean(2).abs() + lr[:, :, mid_x:].mean(2).abs() + 1e-6)
+            asym = ((lr[:, :, :mid_x].mean(2) - lr[:, :, mid_x:].mean(2)) / (
+                lr[:, :, :mid_x].mean(2).abs() + lr[:, :, mid_x:].mean(2).abs()
+                + 1e-4)).clamp(-1, 1)
             pooled = torch.cat(
                 [global_avg, pp_vec, ap_vec, cau_vec, lr_vec,
                  gradient, pc_diff, asym], dim=1)                           # (B, 12C)

@@ -27,7 +27,8 @@ class Trainer:
         self.log = log_fn
 
     def fit(self, train_loader, val_loader, tta_loader=None, epoch_callback=None,
-            eval_train_loader=None, gmm_weight=False, gmm_update_every=1):
+            eval_train_loader=None, gmm_weight=False, gmm_update_every=1,
+            gmm_warmup=10):
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr,
                                 weight_decay=self.weight_decay)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -88,7 +89,8 @@ class Trainer:
 
             # GMM per-sample weight update using EMA model on clean training data
             if gmm_weight and eval_train_loader is not None \
-                    and (epoch + 1) % gmm_update_every == 0:
+                    and epoch >= gmm_warmup \
+                    and (epoch + 1 - gmm_warmup) % gmm_update_every == 0:
                 gmm_weights = self._compute_gmm_weights(eval_train_loader)
                 if train_loader.dataset.sample_weights is None:
                     train_loader.dataset.sample_weights = {}
@@ -102,7 +104,7 @@ class Trainer:
                 eval_probs = val_probs
             row = {
                 "epoch": epoch,
-                "train_loss": float(np.mean(losses)),
+                "train_loss": float(np.nanmean(losses)),
                 "val_log_loss": float(log_loss(val_y, np.clip(eval_probs, 1e-6, 1 - 1e-6))),
                 "val_auroc": float(roc_auc_score(val_y, eval_probs)),
                 "lr": sched.get_last_lr()[0],

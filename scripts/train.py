@@ -140,6 +140,10 @@ def parse_args():
                         "towards 0 without being excluded.")
     p.add_argument("--gmm-update-every", type=int, default=1,
                    help="re-fit GMM every N epochs (default 1; use 5 to save time)")
+    p.add_argument("--gmm-warmup", type=int, default=10,
+                   help="skip GMM updates for the first N epochs while the model is "
+                        "near-random; GMM can't separate clean/noisy until the model "
+                        "has learned the signal (default 10)")
     return p.parse_args()
 
 
@@ -375,7 +379,8 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
                                 epoch_callback=epoch_cb,
                                 eval_train_loader=eval_train_loader,
                                 gmm_weight=getattr(args, "gmm_weight", False),
-                                gmm_update_every=getattr(args, "gmm_update_every", 1))
+                                gmm_update_every=getattr(args, "gmm_update_every", 1),
+                                gmm_warmup=getattr(args, "gmm_warmup", 10))
 
     fold_dir = run_dir / f"fold{k}"
     fold_dir.mkdir(parents=True, exist_ok=True)
