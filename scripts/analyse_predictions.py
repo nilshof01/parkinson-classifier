@@ -35,7 +35,10 @@ TCFG = TrainConfig()
 
 
 def load_df(run_name):
-    oof = pd.read_csv(TCFG.runs_dir / run_name / "oof.csv")
+    run_path = Path(run_name)
+    oof_path = (run_path / "oof.csv") if run_path.is_absolute() or run_path.exists() \
+               else (TCFG.runs_dir / run_name / "oof.csv")
+    oof = pd.read_csv(oof_path)
     feats = pd.read_csv(ACFG.output_dir / "features.csv")
     df = oof.merge(feats[["uid", "asym_putamen", "asym_caudate",
                            "sbr_putamen_min", "sbr_putamen_l", "sbr_putamen_r"]],
