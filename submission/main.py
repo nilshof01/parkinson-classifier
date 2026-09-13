@@ -1,15 +1,16 @@
 """Submission entrypoint for the DrivenData DaT-SPECT challenge.
 
 Directory layout (as unzipped into /code_execution/src/):
-  main.py          ← this file
-  config.py        ← user-editable settings (norm, arch, TTA, calibration)
-  models/          ← drop best_ema.pt checkpoint files here; all are averaged
+  main.py          <- this file
+  config.py        <- user-editable settings (norm, arch, TTA, calibration)
+  models/          <- drop best_ema.pt checkpoint files here; all are averaged
   assets/
-    mean_frame.npy       ← cohort mean frame for alignment
-    template_crop.npy    ← template crop for placement QC
+    mean_frame.npy       <- cohort mean frame for alignment
+    template_crop.npy    <- template crop for placement QC
+    calibrator.npz       <- optional: isotonic calibrator from scripts/calibrate.py
   src/
-    preprocess.py        ← NIfTI → aligned crop
-    cnn3d.py             ← model architecture
+    preprocess.py        <- NIfTI -> aligned crop
+    cnn3d.py             <- model architecture
 
 Reads:   /code_execution/data/niftis/<uid>.nii.gz
          /code_execution/data/submission_format.csv
@@ -43,6 +44,16 @@ def load_assets():
     return mean_frame, template_crop
 
 
+def load_isotonic():
+    path = HERE / "assets" / "calibrator.npz"
+    if not path.exists():
+        raise FileNotFoundError(
+            "CALIBRATION='isotonic' but assets/calibrator.npz not found. "
+            "Run: python scripts/calibrate.py --method isotonic --save-calibrator ...")
+    d = np.load(path)
+    return d["x"], d["y"]   # breakpoints for np.interp
+
+
 # ── Normalization ─────────────────────────────────────────────────────────────
 
 def normalize(vol: np.ndarray) -> torch.Tensor:
@@ -62,15 +73,19 @@ def normalize(vol: np.ndarray) -> torch.Tensor:
 
 def tta_volumes(vol: np.ndarray):
     """Yield (weight, tensor) pairs for all TTA variants."""
+    base_w = getattr(cfg, "TTA_BASE_WEIGHT", 1.0)
+    flip_w = getattr(cfg, "TTA_FLIP_WEIGHT", 1.0)
+    rot_w  = getattr(cfg, "TTA_ROT_WEIGHT",  1.0)
+
     base = normalize(vol)
-    yield 1.0, base
+    yield base_w, base
     if cfg.TTA_FLIP:
-        yield 1.0, normalize(vol[::-1].copy())
+        yield flip_w, normalize(vol[::-1].copy())
     for angle in cfg.TTA_ROTATIONS:
         rot = ndimage.rotate(vol, angle, axes=(0, 1), reshape=False, order=1)
-        yield 1.0, normalize(rot)
+        yield rot_w, normalize(rot)
         if cfg.TTA_FLIP:
-            yield 1.0, normalize(rot[::-1].copy())
+            yield rot_w, normalize(rot[::-1].copy())
 
 
 # ── Model loading ─────────────────────────────────────────────────────────────
@@ -100,22 +115,33 @@ def load_models(device):
 # ── Inference ─────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
-def predict_one(vol: np.ndarray, models, device) -> float:
-    """Average predictions across all models and all TTA variants."""
-    total, count = 0.0, 0
+def predict_one(vol: np.ndarray, models, device,
+                iso_x=None, iso_y=None) -> float:
+    """Average logits across all models and TTA variants, then calibrate."""
     variants = list(tta_volumes(vol))
-    batch = torch.stack([t for _, t in variants]).to(device)  # (N, 1, X, Y, Z)
-    weights = torch.tensor([w for w, _ in variants], dtype=torch.float32, device=device)
-    for model in models:
-        logits = model(batch).float()          # (N,)
-        probs  = torch.sigmoid(logits)         # (N,)
-        total += (probs * weights).sum().item()
-        count += weights.sum().item()
-    raw_p = total / count
+    batch   = torch.stack([t for _, t in variants]).to(device)  # (N, 1, X, Y, Z)
+    weights = torch.tensor([w for w, _ in variants],
+                            dtype=torch.float32, device=device)
 
-    # temperature scaling
-    logit = np.log(max(raw_p, 1e-7) / max(1 - raw_p, 1e-7))
-    p = 1.0 / (1.0 + np.exp(-logit / cfg.TEMPERATURE))
+    total, count = 0.0, 0.0
+    for model in models:
+        logits = model(batch).float()                  # (N,)
+        total += (logits * weights).sum().item()
+        count += weights.sum().item()
+
+    mean_logit = total / count                         # average in logit space
+
+    calibration = getattr(cfg, "CALIBRATION", "temperature")
+
+    if calibration == "isotonic":
+        raw_p = float(torch.sigmoid(torch.tensor(mean_logit)).item())
+        p = float(np.interp(raw_p, iso_x, iso_y))
+    elif calibration == "temperature":
+        t = getattr(cfg, "TEMPERATURE", 1.0)
+        p = float(1.0 / (1.0 + np.exp(-mean_logit / t)))
+    else:
+        p = float(1.0 / (1.0 + np.exp(-mean_logit)))
+
     return float(np.clip(p, cfg.CLIP_LO, cfg.CLIP_HI))
 
 
@@ -124,10 +150,17 @@ def predict_one(vol: np.ndarray, models, device) -> float:
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}  |  norm: {cfg.NORM}  |  crop_margin: {cfg.CROP_MARGIN}")
-    print(f"tta_flip: {cfg.TTA_FLIP}  |  tta_rotations: {cfg.TTA_ROTATIONS}")
+    calibration = getattr(cfg, "CALIBRATION", "temperature")
+    print(f"tta_flip: {cfg.TTA_FLIP}  |  tta_rotations: {cfg.TTA_ROTATIONS}  "
+          f"|  calibration: {calibration}")
 
     mean_frame, template_flat = load_assets()
     models = load_models(device)
+
+    iso_x, iso_y = None, None
+    if calibration == "isotonic":
+        iso_x, iso_y = load_isotonic()
+        print(f"isotonic calibrator: {len(iso_x)} breakpoints")
 
     fmt = pd.read_csv(DATA / "submission_format.csv")
     preds, n_fallback = [], 0
@@ -136,9 +169,9 @@ def main():
         try:
             path = DATA / "niftis" / f"{uid}.nii.gz"
             crop = preprocess(path, mean_frame, template_flat, margin=cfg.CROP_MARGIN)
-            p = predict_one(crop, models, device)
+            p = predict_one(crop, models, device, iso_x, iso_y)
         except Exception as e:
-            print(f"fallback ({type(e).__name__})")
+            print(f"fallback ({type(e).__name__}): {uid}")
             p = cfg.FALLBACK_P
             n_fallback += 1
         preds.append(p)

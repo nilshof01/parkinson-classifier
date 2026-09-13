@@ -16,19 +16,33 @@ NORM_PERCENTILE = 99.0      # only used when NORM = "percentile"
 
 # ── Crop margin ───────────────────────────────────────────────────────────────
 # Must match the --crop-margin used during prepare_dataset.py.
-# m4 (+4 vox/side) is the validated best crop; base crop = slice(26,70)/slice(48,86)/slice(36,62)
-CROP_MARGIN = 4             # 0 = base crop (44×38×26), 4 = m4 (52×46×34)
+CROP_MARGIN = 4             # 0 = base crop (44x38x26), 4 = m4 (52x46x34)
 
 # ── Test-time augmentation ────────────────────────────────────────────────────
-TTA_FLIP = True             # always average L-R flipped prediction with original
+TTA_FLIP = True             # average L-R flipped prediction with original
 TTA_ROTATIONS = []          # additional axial rotation angles in degrees, e.g. [-5, 5]
-                            # each is averaged in along with the base prediction
+
+# TTA weights — base orientation is most reliable; rotations are approximations.
+# Run scripts/calibrate.py --fit-tta-weights to find optimal values from OOF.
+TTA_BASE_WEIGHT = 2.0       # weight for the original orientation
+TTA_FLIP_WEIGHT = 1.0       # weight for the L-R flip
+TTA_ROT_WEIGHT  = 0.5       # weight per rotation (and its flip if TTA_FLIP=True)
 
 # ── Calibration ───────────────────────────────────────────────────────────────
-TEMPERATURE = 1.0           # divide logit by T before sigmoid (>1 = softer, <1 = sharper)
+# "temperature" : divide mean logit by T before sigmoid. Fit T with
+#                 scripts/calibrate.py --method temperature.
+# "isotonic"    : apply piecewise-monotone mapping fitted on OOF predictions.
+#                 Requires submission/assets/calibrator.npz (built by calibrate.py).
+# "none"        : raw sigmoid of mean logit, no post-processing.
+CALIBRATION = "temperature"
+TEMPERATURE  = 1.0          # only used when CALIBRATION = "temperature"
+                            # T > 1 softens (spreads toward 0.5), T < 1 sharpens
+
 CLIP_LO = 0.02              # clip final probabilities to [CLIP_LO, CLIP_HI]
 CLIP_HI = 0.98
 
 # ── Fallback ──────────────────────────────────────────────────────────────────
-# Prediction used when preprocessing fails (dataset prior ≈ 0.548 positive rate)
+# Prediction used when preprocessing fails.
+# Set to mean(OOF predictions) from scripts/calibrate.py output, not the
+# class prior — calibrated mean is a better neutral prediction.
 FALLBACK_P = 0.548
