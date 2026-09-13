@@ -25,7 +25,7 @@ class Cnn3d(nn.Module):
     name = "cnn3d"
 
     def __init__(self, pretrained=True, pool="avg", head="linear",
-                 in_chans=1, width_mult=1.0, dropout=0.3):
+                 in_chans=1, width_mult=1.0, dropout=0.3, aux_weight=0.0):
         super().__init__()
         pool = pool or "avg"
         chs = [max(8, int(round(c * width_mult))) for c in (32, 64, 128, 256)]
@@ -34,10 +34,16 @@ class Cnn3d(nn.Module):
             layers.append(_block(cin, cout, 2))
         self.features = nn.Sequential(*layers)
         self.pool_kind = pool
+        self.aux_weight = aux_weight
 
         if pool == "axisaware":
             # global(1C) + pa_max(1C) + pa_min(1C) + lr_max(1C) + lr_min(1C) = 5C
             dim = chs[-1] * 5
+            if aux_weight > 0:
+                self.aux_pa = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
+                self.aux_lr = nn.Sequential(
+                    nn.Dropout(dropout), nn.Linear(chs[-1] * 2, 1))
         elif pool == "catavgmax":
             dim = chs[-1] * 2
         else:
@@ -61,11 +67,15 @@ class Cnn3d(nn.Module):
             global_avg = f.mean(dim=(2, 3, 4))  # (B, C)
             pa = f.mean(dim=(2, 4))             # (B, C, Y) — P-A profile
             lr = f.mean(dim=(3, 4))             # (B, C, X) — L-R profile
-            pooled = torch.cat([
-                global_avg,
-                pa.amax(dim=2), pa.amin(dim=2),  # anterior peak, posterior trough
-                lr.amax(dim=2), lr.amin(dim=2),  # dominant side, weak side
-            ], dim=1)                            # (B, 5C)
+            pa_vec = torch.cat([pa.amax(dim=2), pa.amin(dim=2)], dim=1)  # (B, 2C)
+            lr_vec = torch.cat([lr.amax(dim=2), lr.amin(dim=2)], dim=1)  # (B, 2C)
+            pooled = torch.cat([global_avg, pa_vec, lr_vec], dim=1)      # (B, 5C)
+            if self.training and self.aux_weight > 0:
+                self._aux_pa_logit = self.aux_pa(pa_vec).squeeze(-1)
+                self._aux_lr_logit = self.aux_lr(lr_vec).squeeze(-1)
+            else:
+                self._aux_pa_logit = None
+                self._aux_lr_logit = None
         elif self.pool_kind == "catavgmax":
             avg = f.mean(dim=(2, 3, 4))
             pooled = torch.cat([avg, f.amax(dim=(2, 3, 4))], dim=1)

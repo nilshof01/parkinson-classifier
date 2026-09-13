@@ -109,14 +109,18 @@ def main():
                     help="which block to hook (-1=last=block3)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--folds-csv", default=None)
+    ap.add_argument("--crops-dir", default=None, help="override crops directory")
     args = ap.parse_args()
 
     run_dir = Path(args.run)
     folds_path = Path(args.folds_csv) if args.folds_csv else TCFG.folds_csv
     folds = pd.read_csv(folds_path)
-    crops_dir = TCFG.prepared_dir / "crops_m4"
-    if not crops_dir.exists():
-        crops_dir = TCFG.crops_dir
+    if args.crops_dir:
+        crops_dir = Path(args.crops_dir)
+    else:
+        crops_dir = TCFG.prepared_dir / "crops_m4"
+        if not crops_dir.exists():
+            crops_dir = TCFG.crops_dir
 
     vp = pd.read_csv(run_dir / f"fold{args.fold}" / "val_preds.csv")
     vp["confidence"] = (vp["pred"] - 0.5).abs()

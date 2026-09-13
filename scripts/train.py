@@ -69,6 +69,8 @@ def parse_args():
                    help="upper bound on the asymmetry index applied by asym-jitter")
     p.add_argument("--label-smoothing", type=float, default=0.0,
                    help="BCE target smoothing, e.g. 0.05 -> targets 0.05/0.95")
+    p.add_argument("--aux-weight", type=float, default=0.0,
+                   help="weight for axisaware auxiliary heads (0=disabled, try 0.3)")
     p.add_argument("--pool", default=None, choices=["avg", "max", "catavgmax", "axisaware"],
                    help="global pooling of CNN backbones (default: model's own, avg); "
                         "catavgmax = concatenated avg+max")
@@ -173,7 +175,7 @@ def build_model(args, view):
     cls = ModelRegistry.get(args.model)
     kwargs = {"pretrained": not args.no_pretrained, "pool": args.pool, "head": args.head}
     extra = {"in_chans": getattr(view, "channels", None), "width_mult": args.width_mult,
-             "dropout": args.dropout3d}
+             "dropout": args.dropout3d, "aux_weight": getattr(args, "aux_weight", 0.0)}
     accepted = inspect.signature(cls.__init__).parameters
     for k, v in extra.items():
         if k in accepted and v is not None:

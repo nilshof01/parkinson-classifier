@@ -61,7 +61,14 @@ class Trainer:
                 if self.label_smoothing > 0:
                     y = y * (1 - 2 * self.label_smoothing) + self.label_smoothing
                 with torch.autocast("cuda", enabled=use_amp):
-                    loss = criterion(self.model(x), y, w)
+                    logits = self.model(x)
+                    loss = criterion(logits, y, w)
+                    aux_pa = getattr(self.model, "_aux_pa_logit", None)
+                    aux_lr = getattr(self.model, "_aux_lr_logit", None)
+                    if aux_pa is not None:
+                        aw = self.model.aux_weight
+                        loss = loss + aw * criterion(aux_pa, y) \
+                                    + aw * criterion(aux_lr, y)
                 scaler.scale(loss).backward()
                 scaler.step(opt)
                 scaler.update()
