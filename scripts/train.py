@@ -36,7 +36,7 @@ def parse_args():
                    choices=["mip", "slices25d", "mipasym", "mipapgrad", "volume3d",
                             "volume3dasym", "fusion3d"])
     p.add_argument("--width-mult", type=float, default=1.0, help="cnn3d width multiplier")
-    p.add_argument("--dropout3d", type=float, default=0.1, help="cnn3d head dropout")
+    p.add_argument("--dropout3d", type=float, default=0.5, help="cnn3d head dropout")
     p.add_argument("--seed-offset", type=int, default=0,
                    help="offsets the training seed (for seed-ensembling); folds unchanged")
     p.add_argument("--fold", default="all", help="fold index 0..4 or 'all'")
@@ -76,6 +76,11 @@ def parse_args():
                         "catavgmax = concatenated avg+max")
     p.add_argument("--head", default="linear", choices=["linear", "mlp"],
                    help="classifier head: single linear (default) or pooled->256->1 MLP")
+    p.add_argument("--norm", default="zscore", choices=["zscore", "percentile"],
+                   help="input normalization for volume3d view: zscore (default) or "
+                        "percentile (divide by Nth percentile of in-head voxels)")
+    p.add_argument("--norm-percentile", type=float, default=99.0,
+                   help="which percentile to use when --norm percentile (default 99)")
     p.add_argument("--loss", default="bce", choices=["bce", "focal"])
     p.add_argument("--focal-gamma", type=float, default=2.0)
     p.add_argument("--aug", default="all",
@@ -102,9 +107,9 @@ def parse_args():
                    help="up-weight mild positive samples by 1/sbr_putamen_min so the "
                         "model pays more attention to hard borderline cases")
     p.add_argument("--aug-rot-deg", type=float, default=15.0,
-                   help="max rotation angle (degrees) for geom augmentation (default 15)")
+                   help="max rotation angle (degrees) for geom augmentation (default 15)") ## sweep confirmed this choice
     p.add_argument("--aug-shift-vox", type=float, default=5.0,
-                   help="max shift (voxels) for geom augmentation (default 5)")
+                   help="max shift (voxels) for geom augmentation (default 5)") ## sweep confirmed this choice
     p.add_argument("--hard-chimera", action="store_true",
                    help="online hard mining: after every 5 epochs re-score normal training "
                         "samples and focus chimera mixing on the ones the model most confuses")
@@ -119,7 +124,8 @@ def build_view(args):
     if args.view == "mipapgrad":
         return MipWithApGradient(CFG.input_size)
     if args.view in ("volume3d", "fusion3d"):
-        return VolumeView()
+        return VolumeView(norm=getattr(args, "norm", "zscore"),
+                          norm_percentile=getattr(args, "norm_percentile", 99.0))
     if args.view == "volume3dasym":
         return VolumeWithAsymmetry()
     return AdjacentSlices(CFG.input_size, k=args.slice_k)
