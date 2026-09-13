@@ -47,7 +47,12 @@ def main():
     for k, (_, val_idx) in enumerate(skf.split(df, df["is_pathologic"])):
         df.loc[val_idx, "fold"] = k
 
-    out = Path(args.out_csv) if args.out_csv else src.parent / f"folds{args.n_folds}.csv"
+    if args.out_csv:
+        out = Path(args.out_csv)
+    elif args.seed == CFG.seed:
+        out = src.parent / f"folds{args.n_folds}.csv"        # backward-compatible default
+    else:
+        out = src.parent / f"folds{args.n_folds}_s{args.seed}.csv"  # seed-tagged
     df.to_csv(out, index=False)
 
     counts = df.groupby("fold")["is_pathologic"].agg(["sum", "count"])
