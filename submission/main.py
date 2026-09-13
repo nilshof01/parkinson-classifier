@@ -18,6 +18,7 @@ Writes:  /code_execution/submission.csv
 """
 
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -163,20 +164,45 @@ def main():
         print(f"isotonic calibrator: {len(iso_x)} breakpoints")
 
     fmt = pd.read_csv(DATA / "submission_format.csv")
-    preds, n_fallback = [], 0
+    uids = fmt["uid"].astype(str).tolist()
 
-    for i, uid in enumerate(fmt["uid"].astype(str)):
-        try:
-            path = DATA / "niftis" / f"{uid}.nii.gz"
-            crop = preprocess(path, mean_frame, template_flat, margin=cfg.CROP_MARGIN)
-            p = predict_one(crop, models, device, iso_x, iso_y)
-        except Exception as e:
-            print(f"fallback ({type(e).__name__}): {uid}")
+    # Preprocess all scans in parallel (CPU-bound; releases GIL via numpy/scipy C code).
+    # Workers saturate CPUs while GPU runs inference sequentially on the results.
+    n_workers = min(8, len(uids))
+    margin = cfg.CROP_MARGIN
+
+    def _preprocess(uid):
+        path = DATA / "niftis" / f"{uid}.nii.gz"
+        return uid, preprocess(path, mean_frame, template_flat, margin=margin)
+
+    crops = {}   # uid -> crop array, preserved for ordering below
+    n_fallback = 0
+    print(f"preprocessing {len(uids)} scans with {n_workers} workers...")
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {pool.submit(_preprocess, uid): uid for uid in uids}
+        for i, fut in enumerate(as_completed(futures)):
+            uid = futures[fut]
+            try:
+                _, crop = fut.result()
+                crops[uid] = crop
+            except Exception as e:
+                print(f"preprocess fallback ({type(e).__name__}): {uid}")
+                crops[uid] = None
+            if (i + 1) % 50 == 0:
+                print(f"  preprocessed {i + 1}/{len(uids)}")
+
+    print("running inference...")
+    preds = []
+    for i, uid in enumerate(uids):
+        crop = crops[uid]
+        if crop is None:
             p = cfg.FALLBACK_P
             n_fallback += 1
+        else:
+            p = predict_one(crop, models, device, iso_x, iso_y)
         preds.append(p)
         if (i + 1) % 50 == 0:
-            print(f"  {i + 1}/{len(fmt)} done")
+            print(f"  {i + 1}/{len(uids)} done")
 
     pd.DataFrame({"uid": fmt["uid"], "is_pathologic": preds}).to_csv(OUT, index=False)
     print(f"wrote {OUT}  ({len(preds)} rows, {n_fallback} fallbacks)")
