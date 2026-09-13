@@ -3,11 +3,35 @@
 # All other files (main.py, src/) should not need changes.
 
 # ── Model architecture ────────────────────────────────────────────────────────
-# Must exactly match the settings used when training the .pt checkpoints.
-MODEL_POOL = "axisaware_split"  # None/"avg" / "axisaware" / "axisaware_split" / "axisaware_bins"
-MODEL_WIDTH_MULT = 1.0          # width multiplier (1.0 = default)
-MODEL_DROPOUT = 0.1             # used only to build the right architecture; dropout is off at eval()
-MODEL_AUX_WEIGHT = 0.1          # >0 adds aux_pa_post/aux_pa_ant/aux_lr heads — must match training
+# When mixing checkpoints from different training runs (different pool / aux_weight),
+# define CHECKPOINTS as a list of dicts. Each entry must have "path" plus any
+# architecture overrides; omitted keys fall back to the MODEL_* defaults below.
+#
+# Example (two runs with different pool types):
+#   CHECKPOINTS = [
+#       {"path": "models/final_fold0.pt",   "pool": "axisaware"},
+#       {"path": "models/axaware_fold0.pt", "pool": "axisaware_split"},
+#   ]
+#
+# Leave CHECKPOINTS = None to load all *.pt files in models/ with the same config.
+CHECKPOINTS = [
+    {"path": "models/final_fold0.pt",    "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/final_fold1.pt",    "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/final_fold2.pt",    "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/final_fold3.pt",    "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/final_fold4.pt",    "pool": "axisaware",       "aux_weight": 0.1},
+    {"path": "models/axaware_fold0.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
+    {"path": "models/axaware_fold1.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
+    {"path": "models/axaware_fold2.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
+    {"path": "models/axaware_fold3.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
+    {"path": "models/axaware_fold4.pt",  "pool": "axisaware_split", "aux_weight": 0.3},
+]
+
+# Defaults used when CHECKPOINTS = None or a checkpoint omits a key.
+MODEL_POOL       = "axisaware_split"
+MODEL_WIDTH_MULT = 1.0
+MODEL_DROPOUT    = 0.1
+MODEL_AUX_WEIGHT = 0.1
 
 # ── Input normalization ───────────────────────────────────────────────────────
 NORM = "percentile"         # "zscore"  — subtract mean / std over non-zero voxels

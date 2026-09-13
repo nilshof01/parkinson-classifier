@@ -92,24 +92,29 @@ def tta_volumes(vol: np.ndarray):
 # ── Model loading ─────────────────────────────────────────────────────────────
 
 def load_models(device):
-    checkpoints = sorted((HERE / "models").glob("*.pt"))
-    if not checkpoints:
+    checkpoint_cfgs = getattr(cfg, "CHECKPOINTS", None)
+    if checkpoint_cfgs:
+        entries = [(HERE / c["path"], c) for c in checkpoint_cfgs]
+    else:
+        entries = [(p, {}) for p in sorted((HERE / "models").glob("*.pt"))]
+
+    if not entries:
         raise FileNotFoundError(
-            f"No .pt files found in {HERE / 'models'}. "
-            "Drop your best_ema.pt checkpoint(s) there.")
+            f"No checkpoints found. Add .pt files to models/ or set CHECKPOINTS in config.py.")
+
     models = []
-    for ckpt in checkpoints:
-        model = Cnn3d(
-            pool=cfg.MODEL_POOL or "avg",
-            width_mult=cfg.MODEL_WIDTH_MULT,
-            dropout=cfg.MODEL_DROPOUT,
-            aux_weight=getattr(cfg, "MODEL_AUX_WEIGHT", 0.0),
-        )
+    for ckpt, overrides in entries:
+        pool       = overrides.get("pool",       cfg.MODEL_POOL or "avg")
+        width_mult = overrides.get("width_mult", cfg.MODEL_WIDTH_MULT)
+        dropout    = overrides.get("dropout",    cfg.MODEL_DROPOUT)
+        aux_weight = overrides.get("aux_weight", getattr(cfg, "MODEL_AUX_WEIGHT", 0.0))
+        model = Cnn3d(pool=pool, width_mult=width_mult,
+                      dropout=dropout, aux_weight=aux_weight)
         state = torch.load(ckpt, map_location="cpu")
         model.load_state_dict(state)
         model.eval().to(device)
         models.append(model)
-    print(f"loaded {len(models)} checkpoint(s): {[c.name for c in checkpoints]}")
+    print(f"loaded {len(models)} checkpoint(s)")
     return models
 
 
