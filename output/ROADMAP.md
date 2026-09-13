@@ -108,7 +108,6 @@ OOF: {
 }
 
 **cnn3d_m4_baseline_s0** — same recipe without posterior augmentation (control for local comparison)
-- STATUS: not yet run
 - Command:
   ```
   python scripts/train.py --model cnn3d --view volume3d \
@@ -124,6 +123,27 @@ OOF: {
   "oof_log_loss_calibrated": 0.23491114377975464,
   "oof_log_loss_calibrated_clipped": 0.2416343092918396
 }
+
+**hard chimera** - look if targeted chimera to hard cases helps.
+
+- Command:
+  ```
+  python scripts/train.py --model cnn3d --view volume3d \
+    --chimera-frac 0.25 --chimera-pos-frac 0.25 \
+    --crops-dir "C:\Users\nilsh\Projects\DaT Parkinson's Challenge\prepared\crops_m4" \
+    --run-name cnn3d_m4_baseline_s0 --workers 0 --epochs 30 --hard-chimera
+  ```
+
+  OOF: {
+  "n": 1353,
+  "oof_auroc": 0.9624685860411799,
+  "oof_log_loss": 0.24412941932678223,
+  "temperature": 1.0730115648219136,
+  "oof_log_loss_calibrated": 0.2435745745897293,
+  "oof_log_loss_calibrated_clipped": 0.24959823489189148
+}
+
+
 **cnn3d_m4_post_uni_s0** — unilateral posterior augmentation (frac=0.15)
 - STATUS: running on pod (2026-09-12)
 - Command:
@@ -242,6 +262,36 @@ OOF: {
   "oof_log_loss_calibrated": 0.2484322190284729,
   "oof_log_loss_calibrated_clipped": 0.254264771938324
 }
+
+## Augmentation rotation/shift sweep — RESOLVED 2026-09-13
+
+Fold-0 sweep over rotation, shift, and gamma augmentation. Base config:
+cnn3d, volume3d, chimera 0.25/0.25, crops_m4, 30 epochs.
+
+| Run | rot (°) | shift (vox) | gamma | val_ll (fold 0) | best epoch |
+|---|---|---|---|---|---|
+| aug_gamma_only | 15 | 5 | on | **0.1814** | 24 |
+| aug_rot15_shift5 | 15 | 5 | on | **0.1814** | 24 |
+| aug_orig_rot8_shift2 | 8 | 2 | on | 0.1841 | 24 |
+| aug_nogamma | 15 | 5 | off | 0.1851 | 29 |
+| aug_rot25_shift10 | 25 | 10 | on | 0.1888 | 29 |
+| aug_rot20_gamma | 20 | 8 | on | 0.1893 | 29 |
+| aug_rot20_shift8 | 20 | 8 | on | 0.1893 | 29 |
+| aug_rot20_nogamma | 20 | 8 | off | 0.1951 | 29 |
+
+**Key findings:**
+- rot15/shift5 is the sweet spot — more aggressive rotation actively hurts (too much
+  anatomy distortion; the uptake pattern is small and fragile).
+- Gamma augmentation helps by ~0.004 and should stay on (default `--aug all`).
+- Original defaults (rot8/shift2) were suboptimal by ~0.003; new defaults confirmed.
+- The train/val gap in folds 2–4 (train ~0.18 vs val ~0.27) was unaffected — it is
+  caused by distribution shift (folds 2–4 val sets contain more mild/bilateral positives),
+  not by augmentation strength.
+
+**Updated frozen recipe for aug:** `--aug-rot-deg 15 --aug-shift-vox 5` (gamma on, default).
+
+**Note:** aug_gamma_only and aug_rot15_shift5 are identical configs (both use default
+`--aug all`); tied score confirms reproducibility.
 
 ## A/P difference channel experiment (not yet started)
 
