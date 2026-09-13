@@ -110,7 +110,7 @@ def load_models(device):
         aux_weight = overrides.get("aux_weight", getattr(cfg, "MODEL_AUX_WEIGHT", 0.0))
         model = Cnn3d(pool=pool, width_mult=width_mult,
                       dropout=dropout, aux_weight=aux_weight)
-        state = torch.load(ckpt, map_location="cpu")
+        state = torch.load(ckpt, map_location="cpu", weights_only=True)
         model.load_state_dict(state)
         model.eval().to(device)
         models.append(model)

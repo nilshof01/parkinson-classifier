@@ -58,15 +58,15 @@ TTA_ROT_WEIGHT  = 0.5       # weight per rotation (and its flip if TTA_FLIP=True
 # "isotonic"    : apply piecewise-monotone mapping fitted on OOF predictions.
 #                 Requires submission/assets/calibrator.npz (built by calibrate.py).
 # "none"        : raw sigmoid of mean logit, no post-processing.
-CALIBRATION = "temperature"
-TEMPERATURE  = 1.0          # only used when CALIBRATION = "temperature"
+CALIBRATION = "isotonic"
+TEMPERATURE  = 1.0979       # only used when CALIBRATION = "temperature"
                             # T > 1 softens (spreads toward 0.5), T < 1 sharpens
 
-CLIP_LO = 0.02              # clip final probabilities to [CLIP_LO, CLIP_HI]
-CLIP_HI = 0.98
+CLIP_LO = 1e-4              # clip final probabilities to [CLIP_LO, CLIP_HI]
+CLIP_HI = 0.9999
 
 # ── Fallback ──────────────────────────────────────────────────────────────────
 # Prediction used when preprocessing fails.
 # Set to mean(OOF predictions) from scripts/calibrate.py output, not the
 # class prior — calibrated mean is a better neutral prediction.
-FALLBACK_P = 0.548
+FALLBACK_P = 0.5309
