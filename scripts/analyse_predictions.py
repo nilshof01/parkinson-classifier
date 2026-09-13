@@ -106,16 +106,19 @@ def main():
     ap.add_argument("run", help="run name under output/runs")
     ap.add_argument("--triaxial", action="store_true",
                     help="show axial + coronal + sagittal MIPs side by side in each cell")
+    ap.add_argument("--crops-dir", default=None, help="override crops directory")
     args = ap.parse_args()
 
     df = load_df(args.run)
     out = ACFG.output_dir / "error_analysis"
     out.mkdir(exist_ok=True)
 
-    # try crops_m4 first, fall back to crops
-    crops_dir = TCFG.prepared_dir / "crops_m4"
-    if not crops_dir.exists():
-        crops_dir = TCFG.crops_dir
+    if args.crops_dir:
+        crops_dir = Path(args.crops_dir)
+    else:
+        crops_dir = TCFG.prepared_dir / "crops_m4"
+        if not crops_dir.exists():
+            crops_dir = TCFG.crops_dir
 
     # ── Summary table ──────────────────────────────────────────────────────────
     total = len(df)
