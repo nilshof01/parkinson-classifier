@@ -25,7 +25,7 @@ class Trainer:
         self.label_smoothing = label_smoothing
         self.log = log_fn
 
-    def fit(self, train_loader, val_loader):
+    def fit(self, train_loader, val_loader, epoch_callback=None):
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr,
                                 weight_decay=self.weight_decay)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -84,6 +84,8 @@ class Trainer:
                     "state": {k: v.cpu().clone() for k, v in self.model.state_dict().items()},
                     "epoch": epoch,
                 }
+            if epoch_callback is not None:
+                epoch_callback(epoch, self.model)
             ema.restore(self.model)
             history.append(row)
             self.log(

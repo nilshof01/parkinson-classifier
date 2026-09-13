@@ -26,8 +26,10 @@ class DatScanDataset(Dataset):
                  pos_chimera=None, pos_frac=0.0, worse_sides=None,
                  posterior_reducer=None, posterior_frac=0.0, posterior_uni_frac=0.0,
                  asym_jitter=None, asym_jitter_frac=0.0,
-                 sample_weights=None):
+                 sample_weights=None,
+                 chimera_weights=None):
         self.sample_weights = sample_weights  # dict uid -> float, or None
+        self.chimera_weights = chimera_weights  # dict uid -> chimera prob override, or None
         self.pos_chimera = pos_chimera
         self.pos_frac = pos_frac
         self.worse_sides = worse_sides
@@ -81,7 +83,9 @@ class DatScanDataset(Dataset):
                 y = torch.tensor(1.0, dtype=torch.float32)
                 applied = True
 
-            cum += self.chimera_frac
+            chi_prob = (self.chimera_weights.get(uid, self.chimera_frac)
+                        if self.chimera_weights else self.chimera_frac)
+            cum += chi_prob
             if not applied and self.chimera is not None and r < cum:
                 vol = self.chimera.mix(vol)
                 applied = True

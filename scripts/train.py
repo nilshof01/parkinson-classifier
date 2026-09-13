@@ -99,6 +99,13 @@ def parse_args():
     p.add_argument("--sbr-weight", action="store_true",
                    help="up-weight mild positive samples by 1/sbr_putamen_min so the "
                         "model pays more attention to hard borderline cases")
+    p.add_argument("--aug-rot-deg", type=float, default=15.0,
+                   help="max rotation angle (degrees) for geom augmentation (default 15)")
+    p.add_argument("--aug-shift-vox", type=float, default=5.0,
+                   help="max shift (voxels) for geom augmentation (default 5)")
+    p.add_argument("--hard-chimera", action="store_true",
+                   help="online hard mining: after every 5 epochs re-score normal training "
+                        "samples and focus chimera mixing on the ones the model most confuses")
     return p.parse_args()
 
 
@@ -122,7 +129,7 @@ AUG_NAMES = ("flip", "geom", "zoom", "res", "field", "scale", "noise", "gamma")
 AUG_DEFAULT_OFF = {"gamma": 0.4}  # p when explicitly enabled; 0 in Augment3D default
 
 
-def build_augment(spec):
+def build_augment(spec, rot_deg=15.0, shift_vox=5.0):
     if spec == "none":
         return None
     chosen = set(AUG_NAMES) if spec == "all" else set(spec.split(","))
@@ -133,6 +140,8 @@ def build_augment(spec):
     for name, p in AUG_DEFAULT_OFF.items():
         if name in chosen:
             kw[f"p_{name}"] = p
+    kw["rot_deg"] = rot_deg
+    kw["shift_vox"] = shift_vox
     return Augment3D(**kw)
 
 
@@ -183,6 +192,32 @@ def build_model(args, view):
     return model
 
 
+def _make_hard_chimera_cb(normal_uids, crops, view, dataset, base_frac, device,
+                          update_every=5, warmup=5):
+    """Returns an epoch callback that re-scores normal training samples every
+    `update_every` epochs and increases chimera probability for the ones the
+    model currently predicts as pathological (hard negatives)."""
+    @torch.no_grad()
+    def callback(epoch, model):
+        if epoch < warmup or epoch % update_every != 0:
+            return
+        model.eval()
+        preds = {}
+        for uid in normal_uids:
+            x = view(crops[uid].astype(np.float32))[None].to(device)
+            preds[uid] = float(torch.sigmoid(model(x)).item())
+        vals = np.array([preds[u] for u in normal_uids])
+        # Scale chimera probability: clearly normal (pred≈0) → base_frac/3,
+        # hard negative (pred≈1) → base_frac*3. Centred at pred=0.5 → base_frac.
+        lo, hi = base_frac / 3.0, base_frac * 3.0
+        scaled = lo + (hi - lo) * vals
+        dataset.chimera_weights = {u: float(p) for u, p in zip(normal_uids, scaled)}
+        hard = sum(1 for p in vals if p > 0.3)
+        print(f"  [hard-chimera] epoch {epoch}: {hard}/{len(normal_uids)} "
+              f"normals with pred>0.3 (max {vals.max():.3f})")
+    return callback
+
+
 def run_fold(k, folds, crops, view, args, run_dir, frames=None):
     torch.manual_seed(CFG.seed + k + 1000 * args.seed_offset)
     np.random.seed(CFG.seed + k + 1000 * args.seed_offset)
@@ -191,10 +226,10 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
     if args.chimera_frac > 0 and frames is None:
         normals = [crops[u] for u in tr.loc[tr["is_pathologic"] == 0.0, "uid"]]
         chimera = ChimeraMixer(normals)
-    aug = build_augment(args.aug)
+    aug = build_augment(args.aug, rot_deg=args.aug_rot_deg, shift_vox=args.aug_shift_vox)
     frame_aug = None
     if frames is not None and aug is not None:
-        frame_aug = build_augment(args.aug)
+        frame_aug = build_augment(args.aug, rot_deg=args.aug_rot_deg, shift_vox=args.aug_shift_vox)
         frame_aug.p_flip = 0.0  # the shared flip is drawn once in the dataset
         aug.p_flip = 0.0
     pos_chimera, sides = None, None
@@ -255,8 +290,13 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
                       weight_decay=args.weight_decay, ema_decay=args.ema_decay,
                       label_smoothing=args.label_smoothing,
                       loss=args.loss, focal_gamma=args.focal_gamma)
+    epoch_cb = None
+    if getattr(args, "hard_chimera", False) and args.chimera_frac > 0 and frames is None:
+        normal_uids = list(tr.loc[tr["is_pathologic"] == 0.0, "uid"])
+        epoch_cb = _make_hard_chimera_cb(
+            normal_uids, crops, view, train_ds, args.chimera_frac, args.device)
     print(f"fold {k}: train {len(tr)}, val {len(va)}")
-    best, history = trainer.fit(train_loader, val_loader)
+    best, history = trainer.fit(train_loader, val_loader, epoch_callback=epoch_cb)
 
     fold_dir = run_dir / f"fold{k}"
     fold_dir.mkdir(parents=True, exist_ok=True)
