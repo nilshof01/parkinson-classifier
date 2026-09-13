@@ -302,7 +302,7 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
             and frames is None:
         feats_path = CFG.repo_dir / "output" / "features.csv"
         if feats_path.exists():
-            sbr = pd.read_csv(feats_path).set_index("uid")["sbr_putamen_min"]
+            sbr = pd.read_csv(feats_path).set_index("uid")["sbr_putamen_min"].dropna()
             sample_weights = {}
             if getattr(args, "sbr_conf_weight", False):
                 # Bidirectional: down-weight suspicious negatives (low SBR) and
