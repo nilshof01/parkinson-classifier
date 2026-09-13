@@ -95,7 +95,6 @@ def main():
     if not folds_csv.exists():
         sys.exit(f"folds.csv not found — pass it via run_args or CFG")
 
-    folds_df = pd.read_csv(folds_csv)
     device = torch.device(args.device)
     view = VolumeView(norm=args.norm, norm_percentile=args.norm_percentile)
 
@@ -115,8 +114,16 @@ def main():
             print(f"  skipping fold {k} — no best_ema.pt")
             continue
 
-        val_uids = folds_df[folds_df["fold"] == k]["uid"].values
-        val_labels = folds_df[folds_df["fold"] == k]["is_pathologic"].values
+        # use the val_preds.csv that was written during training — these are
+        # the exact UIDs/labels the model was validated on, regardless of which
+        # folds.csv is available locally
+        val_preds_csv = fold_dir / "val_preds.csv"
+        if not val_preds_csv.exists():
+            print(f"  skipping fold {k} — no val_preds.csv")
+            continue
+        vp = pd.read_csv(val_preds_csv)
+        val_uids = vp["uid"].values
+        val_labels = vp["is_pathologic"].values
 
         model = load_model(ckpt, run_args).to(device)
         print(f"fold {k}: {len(val_uids)} val scans, angles {angles}")
@@ -162,7 +169,7 @@ def main():
         print(f"{name:<45} {ll:>8.4f} {auc:>7.4f}")
         return ll
 
-    base_ll = report("no_tta", all_preds["no_tta"])
+    report("no_tta", all_preds["no_tta"])
     report("flip_tta (current)", all_preds["flip"])
 
     print()
