@@ -42,9 +42,12 @@ for fold_dir in sorted(runs_dir.glob("core_*/fold0")):
     mf = fold_dir / "metrics.csv"
     if not mf.exists():
         continue
-    data = list(csv.DictReader(open(mf)))
+    data = [r for r in csv.DictReader(open(mf))
+            if r.get("val_log_loss", "").strip() and r.get("train_loss", "").strip()]
+    if not data:
+        print(f"  (no data: {fold_dir.parent.name})")
+        continue
     best = min(data, key=lambda r: float(r["val_log_loss"]))
-    # also grab train loss at best epoch to show gap
     train_ll = float(best["train_loss"])
     val_ll = float(best["val_log_loss"])
     rows.append((fold_dir.parent.name, val_ll, train_ll, val_ll - train_ll, int(best["epoch"])))
