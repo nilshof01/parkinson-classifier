@@ -83,8 +83,10 @@ def gallery(df, crops_dir, title, path, n=24, sort_col=None, ascending=True,
             img = _mip_strip(crop) if triaxial else np.rot90(crop.max(axis=2))
             ax.imshow(img, cmap="hot")
             if triaxial:
-                ax.axvline(crop.shape[2], color="cyan", lw=0.5)
-                ax.axvline(crop.shape[2] + crop.shape[1], color="cyan", lw=0.5)
+                w0 = np.rot90(crop.max(axis=2)).shape[1]
+                w1 = np.rot90(crop.max(axis=1)).shape[1]
+                ax.axvline(w0 - 0.5, color="cyan", lw=0.5, alpha=0.6)
+                ax.axvline(w0 + w1 - 0.5, color="cyan", lw=0.5, alpha=0.6)
         except FileNotFoundError:
             ax.set_facecolor("black")
         label_str = "ABN" if r.is_pathologic else "NRM"
