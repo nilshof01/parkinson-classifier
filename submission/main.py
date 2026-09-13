@@ -87,6 +87,7 @@ def load_models(device):
             pool=cfg.MODEL_POOL or "avg",
             width_mult=cfg.MODEL_WIDTH_MULT,
             dropout=cfg.MODEL_DROPOUT,
+            aux_weight=getattr(cfg, "MODEL_AUX_WEIGHT", 0.0),
         )
         state = torch.load(ckpt, map_location="cpu")
         model.load_state_dict(state)

@@ -4,9 +4,10 @@
 
 # ── Model architecture ────────────────────────────────────────────────────────
 # Must exactly match the settings used when training the .pt checkpoints.
-MODEL_POOL = "avg"          # None/"avg" for baseline; "axisaware" for axis-aware pooling
-MODEL_WIDTH_MULT = 1.0      # width multiplier (1.0 = default)
-MODEL_DROPOUT = 0.0         # irrelevant at eval() time but must match architecture
+MODEL_POOL = "axisaware_split"  # None/"avg" / "axisaware" / "axisaware_split" / "axisaware_bins"
+MODEL_WIDTH_MULT = 1.0          # width multiplier (1.0 = default)
+MODEL_DROPOUT = 0.1             # used only to build the right architecture; dropout is off at eval()
+MODEL_AUX_WEIGHT = 0.1          # >0 adds aux_pa_post/aux_pa_ant/aux_lr heads — must match training
 
 # ── Input normalization ───────────────────────────────────────────────────────
 NORM = "percentile"         # "zscore"  — subtract mean / std over non-zero voxels
