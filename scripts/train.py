@@ -112,6 +112,9 @@ def parse_args():
                    help="max rotation angle (degrees) for geom augmentation (default 15)") ## sweep confirmed this choice
     p.add_argument("--aug-shift-vox", type=float, default=5.0,
                    help="max shift (voxels) for geom augmentation (default 5)") ## sweep confirmed this choice
+    p.add_argument("--aug-aniso-range", type=float, nargs=2, default=[0.9, 1.1],
+                   metavar=("LO", "HI"),
+                   help="per-axis stretch range for aniso augmentation (default 0.9 1.1)")
     p.add_argument("--hard-chimera", action="store_true",
                    help="online hard mining: after every 5 epochs re-score normal training "
                         "samples and focus chimera mixing on the ones the model most confuses")
@@ -133,13 +136,13 @@ def build_view(args):
     return AdjacentSlices(CFG.input_size, k=args.slice_k)
 
 
-AUG_NAMES = ("flip", "geom", "zoom", "res", "field", "scale", "noise", "gamma")
+AUG_NAMES = ("flip", "geom", "zoom", "aniso", "res", "field", "scale", "noise", "gamma")
 
 
 AUG_DEFAULT_OFF = {"gamma": 0.4}  # p when explicitly enabled; 0 in Augment3D default
 
 
-def build_augment(spec, rot_deg=15.0, shift_vox=5.0):
+def build_augment(spec, rot_deg=15.0, shift_vox=5.0, aniso_range=(0.9, 1.1)):
     if spec == "none":
         return None
     chosen = set(AUG_NAMES) if spec == "all" else set(spec.split(","))
@@ -152,6 +155,7 @@ def build_augment(spec, rot_deg=15.0, shift_vox=5.0):
             kw[f"p_{name}"] = p
     kw["rot_deg"] = rot_deg
     kw["shift_vox"] = shift_vox
+    kw["aniso_range"] = tuple(aniso_range)
     return Augment3D(**kw)
 
 
@@ -237,10 +241,12 @@ def run_fold(k, folds, crops, view, args, run_dir, frames=None):
     if args.chimera_frac > 0 and frames is None:
         normals = [crops[u] for u in tr.loc[tr["is_pathologic"] == 0.0, "uid"]]
         chimera = ChimeraMixer(normals)
-    aug = build_augment(args.aug, rot_deg=args.aug_rot_deg, shift_vox=args.aug_shift_vox)
+    aug = build_augment(args.aug, rot_deg=args.aug_rot_deg, shift_vox=args.aug_shift_vox,
+                        aniso_range=args.aug_aniso_range)
     frame_aug = None
     if frames is not None and aug is not None:
-        frame_aug = build_augment(args.aug, rot_deg=args.aug_rot_deg, shift_vox=args.aug_shift_vox)
+        frame_aug = build_augment(args.aug, rot_deg=args.aug_rot_deg, shift_vox=args.aug_shift_vox,
+                                  aniso_range=args.aug_aniso_range)
         frame_aug.p_flip = 0.0  # the shared flip is drawn once in the dataset
         aug.p_flip = 0.0
     pos_chimera, sides = None, None
